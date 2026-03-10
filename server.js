@@ -352,6 +352,60 @@ app.post('/api/brackets/:slug/advance', auth, (req, res) => {
   res.json({ ok: true });
 });
 
+// ─── Rollback Matchup (owner only) ───────────────────────────────────────────
+app.post('/api/brackets/:slug/rollback', auth, (req, res) => {
+  const bracket = db.prepare('SELECT * FROM brackets WHERE slug = ? AND user_id = ?').get(req.params.slug, req.user.id);
+  if (!bracket) return res.status(404).json({ error: 'Not found' });
+
+  const { matchup_id } = req.body || {};
+  const matchup = db.prepare('SELECT * FROM matchups WHERE id = ? AND bracket_id = ?').get(matchup_id, bracket.id);
+  if (!matchup) return res.status(404).json({ error: 'Matchup not found' });
+  if (!matchup.winner_id) return res.status(400).json({ error: 'Matchup has no winner to roll back' });
+
+  // Collect the full forward chain to clear (cascade downstream)
+  const totalRounds = Math.log2(bracket.size);
+  const toRollback = []; // [{ matchup, slot: 'a'|'b'|null }]
+
+  function collectChain(m) {
+    toRollback.push(m);
+    if (m.round >= totalRounds) return;
+    const nextRound = m.round + 1;
+    const nextPos   = Math.ceil(m.position / 2);
+    const next = db.prepare('SELECT * FROM matchups WHERE bracket_id = ? AND round = ? AND position = ?')
+      .get(bracket.id, nextRound, nextPos);
+    // Only follow if next matchup actually received this winner
+    if (next && (next.participant_a_id === m.winner_id || next.participant_b_id === m.winner_id)) {
+      collectChain(next);
+    }
+  }
+  collectChain(matchup);
+
+  db.transaction(() => {
+    for (let i = 0; i < toRollback.length; i++) {
+      const m = toRollback[i];
+      // Clear this matchup's winner
+      db.prepare('UPDATE matchups SET winner_id = NULL WHERE id = ?').run(m.id);
+
+      // Clear the slot this winner occupied in the next round
+      if (i + 1 < toRollback.length) {
+        const next = toRollback[i + 1];
+        // Also wipe next matchup's participants entirely so it's back to TBD
+        if (next.participant_a_id === m.winner_id) {
+          db.prepare('UPDATE matchups SET participant_a_id = NULL WHERE id = ?').run(next.id);
+        } else if (next.participant_b_id === m.winner_id) {
+          db.prepare('UPDATE matchups SET participant_b_id = NULL WHERE id = ?').run(next.id);
+        }
+      }
+    }
+    // If bracket was marked complete, reopen it
+    if (bracket.status === 'complete') {
+      db.prepare('UPDATE brackets SET status = ? WHERE id = ?').run('active', bracket.id);
+    }
+  })();
+
+  res.json({ ok: true, rolledBack: toRollback.length });
+});
+
 // ─── Stripe Checkout ──────────────────────────────────────────────────────────
 app.post('/api/checkout', auth, async (req, res) => {
   if (!STRIPE_SECRET) return res.status(503).json({ error: 'Stripe is not configured on this server' });

@@ -452,9 +452,6 @@ input[readonly] { color: var(--text-2); cursor: text; }
   right: 4px;
   font-size: 10px;
   padding: 2px 6px;
-  background: var(--gold-dim);
-  color: var(--gold);
-  border: 1px solid var(--gold);
   border-radius: 4px;
   cursor: pointer;
   font-family: inherit;
@@ -462,7 +459,20 @@ input[readonly] { color: var(--text-2); cursor: text; }
   opacity: 0;
   transition: opacity 0.15s;
 }
+.slot-advance {
+  background: var(--gold-dim);
+  color: var(--gold);
+  border: 1px solid var(--gold);
+}
+.slot-rollback {
+  background: rgba(248,113,113,0.12);
+  color: var(--danger);
+  border: 1px solid var(--danger);
+}
 .matchup-card:hover .slot-advance-btn { opacity: 1; }
+
+/* Bracket scroll wrap height managed by JS */
+.bracket-scroll-wrap { overflow: visible; }
 
 /* Champion */
 .champion-display {

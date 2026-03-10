@@ -543,6 +543,32 @@ function renderBracket(bracket, participants, matchups, isOwner) {
     div.textContent = label;
     labelsEl.appendChild(div);
   }
+
+  // Scale & center after paint
+  requestAnimationFrame(() => scaleBracket(totalW, totalH));
+}
+
+function scaleBracket(bracketW, bracketH) {
+  const wrap = document.querySelector('.bracket-scroll-wrap');
+  const container = $('bracket-container');
+  if (!wrap || !container) return;
+
+  const availW = wrap.clientWidth  - 32;
+  const availH = window.innerHeight - 220; // header + labels + padding
+
+  const scaleX = availW  / bracketW;
+  const scaleY = availH  / bracketH;
+  const scale  = Math.min(1, scaleX, scaleY); // never upscale
+
+  container.style.transform       = `scale(${scale})`;
+  container.style.transformOrigin = 'top left';
+
+  // Collapse the wrapper to the scaled size so page doesn't over-scroll
+  wrap.style.height = Math.ceil(bracketH * scale) + 'px';
+
+  // Center horizontally if there's leftover space
+  const scaledW = bracketW * scale;
+  container.style.marginLeft = scaledW < availW ? Math.floor((availW - scaledW) / 2) + 'px' : '0';
 }
 
 function buildMatchupCard(m, pMap, isOwner, bracket) {
@@ -564,16 +590,23 @@ function buildMatchupCard(m, pMap, isOwner, bracket) {
   `;
 
   // Advance button click
-  if (isOwner && !m.winner_id && !isTbd && bracket.status === 'active') {
-    card.querySelectorAll('.slot-advance-btn').forEach(btn => {
-      btn.addEventListener('click', e => {
-        e.stopPropagation();
-        const pid = Number(btn.dataset.pid);
-        const p = pMap[pid];
-        openAdvanceModal(m.id, pid, p?.name || 'Unknown');
-      });
+  card.querySelectorAll('.slot-advance').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      const pid = Number(btn.dataset.pid);
+      const p = pMap[pid];
+      openAdvanceModal(m.id, pid, p?.name || 'Unknown');
     });
-  }
+  });
+
+  // Rollback button click
+  card.querySelectorAll('.slot-rollback').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      const mid = Number(btn.dataset.mid);
+      openRollbackModal(mid);
+    });
+  });
 
   return card;
 }
@@ -589,8 +622,17 @@ function buildSlot(m, p, side, winnerId, votes, isOwner, bracket) {
     ? `<img class="slot-img" src="${esc(p.img)}" alt="" loading="lazy" onerror="this.style.display='none'">`
     : `<div class="slot-img-ph"></div>`;
   const voteStr = votes > 0 ? `<span class="slot-votes">${votes}</span>` : '';
+
   const canAdvance = isOwner && !winnerId && bracket.status === 'active' && m.participant_a_id && m.participant_b_id;
-  const advanceBtn = canAdvance ? `<button class="slot-advance-btn" data-pid="${p.id}" title="Advance ${esc(p.name)}">✓</button>` : '';
+  const advanceBtn = canAdvance
+    ? `<button class="slot-advance-btn slot-advance" data-pid="${p.id}" title="Advance ${esc(p.name)}">✓</button>`
+    : '';
+
+  // Rollback button: only on the winning slot, only for owner
+  const canRollback = isOwner && isWinner;
+  const rollbackBtn = canRollback
+    ? `<button class="slot-advance-btn slot-rollback" data-mid="${m.id}" title="Roll back this result">↩</button>`
+    : '';
 
   return `
     <div class="matchup-slot ${cls}">
@@ -598,7 +640,7 @@ function buildSlot(m, p, side, winnerId, votes, isOwner, bracket) {
       ${img}
       <span class="slot-name">${esc(p.name)}</span>
       ${voteStr}
-      ${advanceBtn}
+      ${advanceBtn}${rollbackBtn}
     </div>
   `;
 }
@@ -655,31 +697,56 @@ function renderChampion(bracket, participants, matchups) {
   show('champion-display');
 }
 
-// ─── Advance Modal ────────────────────────────────────────────────────────────
+// ─── Advance / Rollback Modal ─────────────────────────────────────────────────
+let pendingAction = null; // { type: 'advance'|'rollback', matchup_id, winner_id?, winner_name? }
+
 function openAdvanceModal(matchupId, winnerId, winnerName) {
-  state.pendingAdvance = { matchup_id: matchupId, winner_id: winnerId, winner_name: winnerName };
+  pendingAction = { type: 'advance', matchup_id: matchupId, winner_id: winnerId };
+  $('advance-modal-title').textContent = 'Confirm Advancement';
   $('advance-confirm-text').textContent = `Advance "${winnerName}" as the winner of this matchup?`;
+  $('advance-confirm-btn').textContent = 'Confirm Winner';
+  $('advance-confirm-btn').className = 'btn btn-primary';
   show('advance-modal');
 }
 
-$('advance-modal-close').addEventListener('click', () => hide('advance-modal'));
-$('advance-cancel-btn').addEventListener('click', () => hide('advance-modal'));
+function openRollbackModal(matchupId) {
+  pendingAction = { type: 'rollback', matchup_id: matchupId };
+  $('advance-modal-title').textContent = 'Roll Back Result';
+  $('advance-confirm-text').textContent = `This will undo the winner and any downstream results that depended on this matchup. Continue?`;
+  $('advance-confirm-btn').textContent = 'Roll Back';
+  $('advance-confirm-btn').className = 'btn btn-danger';
+  show('advance-modal');
+}
+
+$('advance-modal-close').addEventListener('click', () => { hide('advance-modal'); pendingAction = null; });
+$('advance-cancel-btn').addEventListener('click', () => { hide('advance-modal'); pendingAction = null; });
 
 $('advance-confirm-btn').addEventListener('click', async () => {
-  if (!state.pendingAdvance) return;
-  const { matchup_id, winner_id } = state.pendingAdvance;
+  if (!pendingAction) return;
+  const action = pendingAction;
+  pendingAction = null;
   hide('advance-modal');
+
   try {
-    await api('POST', `/api/brackets/${state.currentSlug}/advance`, { matchup_id, winner_id });
-    const fresh = await api('GET', `/api/brackets/${state.currentSlug}`);
-    state.bracketData = fresh;
-    renderBracket(fresh.bracket, fresh.participants, fresh.matchups, fresh.isOwner);
-    renderChampion(fresh.bracket, fresh.participants, fresh.matchups);
-    const active = fresh.matchups.some(m => !m.winner_id && m.participant_a_id && m.participant_b_id);
-    setHidden('vote-now-btn', fresh.bracket.status !== 'active' || !active);
-  } catch (e) { alert('Failed to advance: ' + e.message); }
-  state.pendingAdvance = null;
+    if (action.type === 'advance') {
+      await api('POST', `/api/brackets/${state.currentSlug}/advance`, { matchup_id: action.matchup_id, winner_id: action.winner_id });
+    } else {
+      await api('POST', `/api/brackets/${state.currentSlug}/rollback`, { matchup_id: action.matchup_id });
+    }
+    await refreshBracketView();
+  } catch (e) {
+    alert(`Failed to ${action.type}: ` + e.message);
+  }
 });
+
+async function refreshBracketView() {
+  const fresh = await api('GET', `/api/brackets/${state.currentSlug}`);
+  state.bracketData = fresh;
+  renderBracket(fresh.bracket, fresh.participants, fresh.matchups, fresh.isOwner);
+  renderChampion(fresh.bracket, fresh.participants, fresh.matchups);
+  const active = fresh.matchups.some(m => !m.winner_id && m.participant_a_id && m.participant_b_id);
+  setHidden('vote-now-btn', fresh.bracket.status !== 'active' || !active);
+}
 
 // ─── Vote Modal ───────────────────────────────────────────────────────────────
 $('vote-now-btn').addEventListener('click', openVoteModal);
@@ -819,6 +886,21 @@ async function startCheckout() {
 function esc(str) {
   return String(str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
+
+// Re-scale on resize
+let _resizeTimer;
+window.addEventListener('resize', () => {
+  clearTimeout(_resizeTimer);
+  _resizeTimer = setTimeout(() => {
+    if (state.bracketData) {
+      const { bracket } = state.bracketData;
+      const totalRounds = Math.log2(bracket.size);
+      const totalH = bracket.size * (CARD_H / 2) + V_PAD * 2;
+      const totalW = totalRounds * ROUND_GAP;
+      scaleBracket(totalW, totalH);
+    }
+  }, 120);
+});
 
 // ─── Boot ─────────────────────────────────────────────────────────────────────
 loadAuth();
