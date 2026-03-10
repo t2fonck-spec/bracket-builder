@@ -30,14 +30,15 @@ db.exec(`
   );
 
   CREATE TABLE IF NOT EXISTS brackets (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id    INTEGER NOT NULL,
-    title      TEXT    NOT NULL,
-    slug       TEXT    UNIQUE NOT NULL,
-    size       INTEGER NOT NULL DEFAULT 8,
-    is_paid    INTEGER NOT NULL DEFAULT 0,
-    status     TEXT    NOT NULL DEFAULT 'setup',
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     INTEGER NOT NULL,
+    title       TEXT    NOT NULL,
+    slug        TEXT    UNIQUE NOT NULL,
+    size        INTEGER NOT NULL DEFAULT 8,
+    is_paid     INTEGER NOT NULL DEFAULT 0,
+    status      TEXT    NOT NULL DEFAULT 'setup',
+    description TEXT,
+    created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(id)
   );
 
@@ -58,6 +59,8 @@ db.exec(`
     participant_a_id  INTEGER,
     participant_b_id  INTEGER,
     winner_id         INTEGER,
+    score_a           INTEGER,
+    score_b           INTEGER,
     FOREIGN KEY (bracket_id) REFERENCES brackets(id)
   );
 
@@ -73,6 +76,12 @@ db.exec(`
     FOREIGN KEY (matchup_id)    REFERENCES matchups(id)
   );
 `);
+
+// ─── Migrations (idempotent) ──────────────────────────────────────────────────
+['ALTER TABLE matchups ADD COLUMN score_a INTEGER',
+ 'ALTER TABLE matchups ADD COLUMN score_b INTEGER',
+ 'ALTER TABLE brackets ADD COLUMN description TEXT',
+].forEach(sql => { try { db.exec(sql); } catch {} });
 
 // ─── Middleware ───────────────────────────────────────────────────────────────
 app.use('/api/webhook', express.raw({ type: 'application/json' }));
@@ -188,6 +197,8 @@ app.get('/api/brackets/:slug', optionalAuth, (req, res) => {
 
   const matchupsWithVotes = matchups.map(m => ({
     ...m,
+    score_a: m.score_a ?? null,
+    score_b: m.score_b ?? null,
     votes: votesMap[m.id] || {}
   }));
 
@@ -347,6 +358,104 @@ app.post('/api/brackets/:slug/advance', auth, (req, res) => {
         db.prepare('UPDATE brackets SET status = ? WHERE id = ?').run('complete', bracket.id);
       }
     }
+  })();
+
+  res.json({ ok: true });
+});
+
+// ─── Update Bracket metadata (title / description) ───────────────────────────
+app.patch('/api/brackets/:slug', auth, (req, res) => {
+  const bracket = db.prepare('SELECT * FROM brackets WHERE slug = ? AND user_id = ?').get(req.params.slug, req.user.id);
+  if (!bracket) return res.status(404).json({ error: 'Not found' });
+  const { title, description } = req.body || {};
+  const newTitle = title?.trim() || bracket.title;
+  const newDesc  = description !== undefined ? (description?.trim() || null) : bracket.description;
+  db.prepare('UPDATE brackets SET title = ?, description = ? WHERE id = ?').run(newTitle, newDesc, bracket.id);
+  res.json({ ok: true, title: newTitle, description: newDesc });
+});
+
+// ─── Set Matchup Scores (owner only) ─────────────────────────────────────────
+app.patch('/api/brackets/:slug/matchups/:id', auth, (req, res) => {
+  const bracket = db.prepare('SELECT * FROM brackets WHERE slug = ? AND user_id = ?').get(req.params.slug, req.user.id);
+  if (!bracket) return res.status(404).json({ error: 'Not found' });
+  const matchup = db.prepare('SELECT * FROM matchups WHERE id = ? AND bracket_id = ?').get(req.params.id, bracket.id);
+  if (!matchup) return res.status(404).json({ error: 'Matchup not found' });
+
+  const { score_a, score_b } = req.body || {};
+  const sa = score_a !== undefined && score_a !== null && score_a !== '' ? Number(score_a) : matchup.score_a;
+  const sb = score_b !== undefined && score_b !== null && score_b !== '' ? Number(score_b) : matchup.score_b;
+  db.prepare('UPDATE matchups SET score_a = ?, score_b = ? WHERE id = ?').run(sa ?? null, sb ?? null, matchup.id);
+  res.json({ ok: true, score_a: sa, score_b: sb });
+});
+
+// ─── Bulk Add Participants ────────────────────────────────────────────────────
+app.post('/api/brackets/:slug/participants/bulk', auth, (req, res) => {
+  const bracket = db.prepare('SELECT * FROM brackets WHERE slug = ? AND user_id = ?').get(req.params.slug, req.user.id);
+  if (!bracket) return res.status(404).json({ error: 'Not found' });
+  if (bracket.status !== 'setup') return res.status(400).json({ error: 'Bracket already started' });
+
+  const { names } = req.body || {};
+  if (!Array.isArray(names) || !names.length) return res.status(400).json({ error: 'names array required' });
+
+  const existing = db.prepare('SELECT COUNT(*) as c FROM participants WHERE bracket_id = ?').get(bracket.id).c;
+  const slots = bracket.size - existing;
+  if (slots <= 0) return res.status(400).json({ error: `Bracket is full (${bracket.size} participants)` });
+
+  const toAdd = names.map(n => n.trim()).filter(Boolean).slice(0, slots);
+  const insert = db.prepare('INSERT INTO participants (bracket_id, name, seed) VALUES (?, ?, ?)');
+
+  const added = db.transaction(() => {
+    return toAdd.map((name, i) => {
+      const seed = existing + i + 1;
+      const row = insert.run(bracket.id, name, seed);
+      return { id: row.lastInsertRowid, name, seed };
+    });
+  })();
+
+  res.status(201).json({ added });
+});
+
+// ─── Shuffle Participant Seeding ──────────────────────────────────────────────
+app.post('/api/brackets/:slug/participants/shuffle', auth, (req, res) => {
+  const bracket = db.prepare('SELECT * FROM brackets WHERE slug = ? AND user_id = ?').get(req.params.slug, req.user.id);
+  if (!bracket) return res.status(404).json({ error: 'Not found' });
+  if (bracket.status !== 'setup') return res.status(400).json({ error: 'Cannot shuffle after bracket has started' });
+
+  const participants = db.prepare('SELECT id FROM participants WHERE bracket_id = ?').all(bracket.id);
+  // Fisher-Yates shuffle of seeds
+  const seeds = participants.map((_, i) => i + 1);
+  for (let i = seeds.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [seeds[i], seeds[j]] = [seeds[j], seeds[i]];
+  }
+  const update = db.prepare('UPDATE participants SET seed = ? WHERE id = ?');
+  db.transaction(() => participants.forEach((p, i) => update.run(seeds[i], p.id)))();
+  res.json({ ok: true });
+});
+
+// ─── Reorder Participant (drag-drop) ─────────────────────────────────────────
+app.patch('/api/brackets/:slug/participants/:id/seed', auth, (req, res) => {
+  const bracket = db.prepare('SELECT * FROM brackets WHERE slug = ? AND user_id = ?').get(req.params.slug, req.user.id);
+  if (!bracket) return res.status(404).json({ error: 'Not found' });
+  if (bracket.status !== 'setup') return res.status(400).json({ error: 'Cannot reorder after bracket has started' });
+
+  const { new_seed } = req.body || {};
+  if (!new_seed) return res.status(400).json({ error: 'new_seed required' });
+
+  const target = db.prepare('SELECT * FROM participants WHERE id = ? AND bracket_id = ?').get(req.params.id, bracket.id);
+  if (!target) return res.status(404).json({ error: 'Participant not found' });
+
+  const oldSeed = target.seed;
+  const ns = Number(new_seed);
+
+  // Shift seeds to make room
+  db.transaction(() => {
+    if (ns < oldSeed) {
+      db.prepare('UPDATE participants SET seed = seed + 1 WHERE bracket_id = ? AND seed >= ? AND seed < ?').run(bracket.id, ns, oldSeed);
+    } else {
+      db.prepare('UPDATE participants SET seed = seed - 1 WHERE bracket_id = ? AND seed > ? AND seed <= ?').run(bracket.id, oldSeed, ns);
+    }
+    db.prepare('UPDATE participants SET seed = ? WHERE id = ?').run(ns, target.id);
   })();
 
   res.json({ ok: true });
