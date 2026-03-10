@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bracket Builder</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+  <!-- ── Auth View ────────────────────────────────────────── -->
+  <div id="auth-view" class="view hidden">
+    <div class="auth-wrap">
+      <div class="auth-logo">
+        <svg width="36" height="36" viewBox="0 0 36 36" fill="none">
+          <rect width="36" height="36" rx="10" fill="#D4AF37"/>
+          <path d="M8 8h6v20H8zM22 8h6v8h-6zM22 22h6v6h-6z" fill="#0F1117"/>
+        </svg>
+        <span>Bracket Builder</span>
+      </div>
+      <div class="auth-tabs">
+        <button class="auth-tab active" data-tab="login">Sign In</button>
+        <button class="auth-tab" data-tab="register">Create Account</button>
+      </div>
+      <form id="auth-form" class="auth-form">
+        <div class="field">
+          <label for="auth-email">Email</label>
+          <input type="email" id="auth-email" placeholder="you@example.com" required autocomplete="email">
+        </div>
+        <div class="field">
+          <label for="auth-password">Password</label>
+          <input type="password" id="auth-password" placeholder="••••••••" required autocomplete="current-password">
+        </div>
+        <div id="auth-error" class="form-error hidden"></div>
+        <button type="submit" class="btn btn-primary btn-full" id="auth-submit">Sign In</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- ── Dashboard View ───────────────────────────────────── -->
+  <div id="dashboard-view" class="view hidden">
+    <header class="app-header">
+      <div class="header-brand">
+        <svg width="28" height="28" viewBox="0 0 36 36" fill="none">
+          <rect width="36" height="36" rx="10" fill="#D4AF37"/>
+          <path d="M8 8h6v20H8zM22 8h6v8h-6zM22 22h6v6h-6z" fill="#0F1117"/>
+        </svg>
+        <span>Bracket Builder</span>
+      </div>
+      <div class="header-actions">
+        <span id="header-tier-badge"></span>
+        <span id="header-email" class="header-email"></span>
+        <button class="btn btn-ghost btn-sm" id="logout-btn">Logout</button>
+      </div>
+    </header>
+    <main class="dashboard-main">
+      <div class="dashboard-top">
+        <h1>My Brackets</h1>
+        <button class="btn btn-primary" id="new-bracket-btn">+ New Bracket</button>
+      </div>
+      <div id="upgrade-banner" class="upgrade-banner hidden">
+        <div>
+          <strong>Unlock Pro</strong> — get 16 &amp; 32-team brackets for a one-time payment of <strong>$2.99</strong>
+        </div>
+        <button class="btn btn-gold btn-sm" id="upgrade-btn">Upgrade Now</button>
+      </div>
+      <div id="brackets-list" class="brackets-grid"></div>
+      <div id="brackets-empty" class="empty-state hidden">
+        <p>No brackets yet. Create your first one!</p>
+      </div>
+    </main>
+  </div>
+
+  <!-- ── Manage View ───────────────────────────────────────── -->
+  <div id="manage-view" class="view hidden">
+    <header class="app-header">
+      <button class="btn btn-ghost btn-sm" id="manage-back-btn">← Dashboard</button>
+      <div class="header-brand small">
+        <span id="manage-title"></span>
+      </div>
+      <div class="header-actions">
+        <span id="manage-size-badge" class="badge"></span>
+      </div>
+    </header>
+    <main class="manage-main">
+      <div class="manage-columns">
+        <!-- Add participants -->
+        <section class="manage-section">
+          <h2>Participants <span id="manage-count-badge" class="badge"></span></h2>
+          <form id="add-participant-form">
+            <div class="field-row">
+              <input type="text" id="p-name" placeholder="Name" required maxlength="50">
+              <input type="url" id="p-img" placeholder="Image URL (optional)">
+              <button type="submit" class="btn btn-primary btn-sm">Add</button>
+            </div>
+            <div id="add-p-error" class="form-error hidden"></div>
+          </form>
+          <ul id="participants-list" class="participants-list"></ul>
+        </section>
+        <!-- Actions -->
+        <section class="manage-section manage-actions-section">
+          <h2>Launch</h2>
+          <div id="manage-status-msg" class="status-msg"></div>
+          <button class="btn btn-primary btn-full" id="start-bracket-btn" disabled>
+            Start Bracket
+          </button>
+          <div class="share-block hidden" id="share-block">
+            <label>Public Link</label>
+            <div class="copy-row">
+              <input type="text" id="share-url" readonly>
+              <button class="btn btn-ghost btn-sm" id="copy-url-btn">Copy</button>
+            </div>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <!-- ── Bracket View ──────────────────────────────────────── -->
+  <div id="bracket-view" class="view hidden">
+    <header class="app-header">
+      <button class="btn btn-ghost btn-sm" id="bracket-back-btn">← Back</button>
+      <div class="header-brand small">
+        <span id="bracket-title"></span>
+      </div>
+      <div class="header-actions">
+        <span id="bracket-status-badge" class="badge"></span>
+        <button class="btn btn-gold btn-sm hidden" id="vote-now-btn">Vote Now</button>
+        <button class="btn btn-ghost btn-sm hidden" id="manage-bracket-btn">Manage</button>
+      </div>
+    </header>
+    <main class="bracket-main">
+      <div id="bracket-round-labels" class="round-labels"></div>
+      <div class="bracket-scroll-wrap">
+        <div id="bracket-container" class="bracket-container">
+          <canvas id="bracket-lines" class="bracket-lines"></canvas>
+          <div id="bracket-rounds" class="bracket-rounds"></div>
+        </div>
+      </div>
+      <div id="champion-display" class="champion-display hidden">
+        <div class="champion-inner">
+          <div class="champion-crown">🏆</div>
+          <div class="champion-label">Champion</div>
+          <div id="champion-name" class="champion-name"></div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- ── Create Bracket Modal ─────────────────────────────── -->
+  <div id="create-modal" class="modal-overlay hidden" role="dialog" aria-modal="true">
+    <div class="modal-box">
+      <div class="modal-header">
+        <h2>New Bracket</h2>
+        <button class="modal-close" id="create-modal-close" aria-label="Close">✕</button>
+      </div>
+      <form id="create-form">
+        <div class="field">
+          <label for="b-title">Title</label>
+          <input type="text" id="b-title" placeholder="e.g. Best Pizza Toppings" required maxlength="80">
+        </div>
+        <div class="field">
+          <label>Size</label>
+          <div class="size-options" id="size-options">
+            <label class="size-option selected" data-size="8">
+              <input type="radio" name="size" value="8" checked>
+              <span class="size-num">8</span>
+              <span class="size-label">teams</span>
+              <span class="size-tag free">Free</span>
+            </label>
+            <label class="size-option" data-size="16">
+              <input type="radio" name="size" value="16">
+              <span class="size-num">16</span>
+              <span class="size-label">teams</span>
+              <span class="size-tag pro">Pro</span>
+            </label>
+            <label class="size-option" data-size="32">
+              <input type="radio" name="size" value="32">
+              <span class="size-num">32</span>
+              <span class="size-label">teams</span>
+              <span class="size-tag pro">Pro</span>
+            </label>
+          </div>
+          <p id="size-upgrade-note" class="size-upgrade-note hidden">
+            16 &amp; 32-team brackets require Pro ($2.99 one-time). <a href="#" id="size-upgrade-link">Upgrade</a>
+          </p>
+        </div>
+        <div id="create-error" class="form-error hidden"></div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-ghost" id="create-cancel-btn">Cancel</button>
+          <button type="submit" class="btn btn-primary">Create Bracket</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ── Vote Modal ────────────────────────────────────────── -->
+  <div id="vote-modal" class="modal-overlay hidden" role="dialog" aria-modal="true">
+    <div class="modal-box vote-modal-box">
+      <div class="modal-header">
+        <div>
+          <h2>Cast Your Vote</h2>
+          <div id="vote-progress" class="vote-progress-text"></div>
+        </div>
+        <button class="modal-close" id="vote-modal-close" aria-label="Close">✕</button>
+      </div>
+      <div id="vote-matchup" class="vote-matchup">
+        <div class="vote-side" id="vote-side-a">
+          <div class="vote-img-wrap" id="vote-img-a"></div>
+          <div class="vote-name" id="vote-name-a"></div>
+          <div class="vote-bar-wrap"><div class="vote-bar" id="vote-bar-a"></div></div>
+          <div class="vote-pct" id="vote-pct-a"></div>
+        </div>
+        <div class="vote-vs">VS</div>
+        <div class="vote-side" id="vote-side-b">
+          <div class="vote-img-wrap" id="vote-img-b"></div>
+          <div class="vote-name" id="vote-name-b"></div>
+          <div class="vote-bar-wrap"><div class="vote-bar" id="vote-bar-b"></div></div>
+          <div class="vote-pct" id="vote-pct-b"></div>
+        </div>
+      </div>
+      <div class="vote-actions">
+        <button class="btn btn-vote" id="vote-btn-a"></button>
+        <button class="btn btn-ghost btn-sm" id="vote-skip-btn">Skip</button>
+        <button class="btn btn-vote" id="vote-btn-b"></button>
+      </div>
+      <div id="vote-feedback" class="vote-feedback hidden"></div>
+    </div>
+  </div>
+
+  <!-- ── Advance Confirm Modal ─────────────────────────────── -->
+  <div id="advance-modal" class="modal-overlay hidden" role="dialog" aria-modal="true">
+    <div class="modal-box modal-box-sm">
+      <div class="modal-header">
+        <h2>Confirm Advancement</h2>
+        <button class="modal-close" id="advance-modal-close">✕</button>
+      </div>
+      <p id="advance-confirm-text" class="advance-confirm-text"></p>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" id="advance-cancel-btn">Cancel</button>
+        <button class="btn btn-primary" id="advance-confirm-btn">Confirm Winner</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
