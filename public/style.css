@@ -670,6 +670,166 @@ input[readonly] { color: var(--text-2); cursor: text; }
 .view:not(.hidden) { animation: fadeIn 0.2s ease; }
 .modal-box { animation: fadeIn 0.2s ease; }
 
+/* ─── Manage View additions ──────────────────────────────────────────── */
+.section-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.section-header-actions { display: flex; gap: 6px; }
+
+textarea {
+  background: var(--surface-2);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-sm);
+  padding: 9px 12px;
+  font-size: 14px;
+  color: var(--text);
+  outline: none;
+  resize: vertical;
+  width: 100%;
+  font-family: var(--font);
+  transition: border-color 0.15s;
+}
+textarea:focus { border-color: var(--gold); }
+.label-optional { font-size: 11px; color: var(--text-3); font-weight: 400; }
+
+.drag-handle {
+  color: var(--text-3);
+  cursor: grab;
+  font-size: 16px;
+  padding: 0 4px;
+  flex-shrink: 0;
+  user-select: none;
+}
+.participant-item.dragging { opacity: 0.4; }
+.participant-item.drag-over { border-color: var(--gold); background: var(--gold-dim); }
+
+/* ─── Bracket Toolbar ────────────────────────────────────────────────── */
+.bracket-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 20px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.toolbar-group { display: flex; align-items: center; gap: 6px; }
+.toggle-pill {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 20px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-2);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-2);
+  transition: all 0.15s;
+  user-select: none;
+}
+.toggle-pill input { display: none; }
+.toggle-pill:has(input:checked) {
+  background: var(--gold-dim);
+  border-color: var(--gold);
+  color: var(--gold);
+}
+.zoom-group { gap: 4px; }
+.zoom-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2);
+  min-width: 40px;
+  text-align: center;
+}
+
+/* ─── Inline title edit ──────────────────────────────────────────────── */
+.bracket-title-editable { cursor: pointer; }
+.bracket-title-editable:hover { color: var(--gold); }
+.bracket-title-input {
+  background: var(--surface-2);
+  border: 1px solid var(--gold);
+  border-radius: var(--radius-sm);
+  padding: 3px 8px;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+  outline: none;
+  width: 260px;
+  max-width: 40vw;
+  font-family: var(--font);
+}
+
+/* ─── Score inputs on matchup slots ─────────────────────────────────── */
+.score-input {
+  width: 38px;
+  padding: 1px 4px;
+  font-size: 11px;
+  font-weight: 700;
+  background: var(--surface);
+  border: 1px solid var(--border-2);
+  border-radius: 3px;
+  color: var(--gold);
+  text-align: center;
+  outline: none;
+  flex-shrink: 0;
+  font-family: var(--font);
+  -moz-appearance: textfield;
+}
+.score-input::-webkit-inner-spin-button,
+.score-input::-webkit-outer-spin-button { -webkit-appearance: none; }
+.score-input:focus { border-color: var(--gold); }
+.slot-score {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--gold);
+  min-width: 16px;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+/* ─── Export Modal ───────────────────────────────────────────────────── */
+.export-options {
+  display: flex;
+  gap: 8px;
+}
+.export-option {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 12px 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-2);
+  transition: all 0.15s;
+}
+.export-option input { display: none; }
+.export-option:hover { border-color: var(--gold); color: var(--text); }
+.export-option.selected { border-color: var(--gold); background: var(--gold-dim); color: var(--gold); }
+.export-icon { font-size: 20px; }
+.radio-row { display: flex; gap: 16px; }
+.radio-opt {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  color: var(--text-2);
+  cursor: pointer;
+}
+.radio-opt input { accent-color: var(--gold); }
+
 /* ─── Print / PDF ────────────────────────────────────────────────────── */
 @media print {
   /* Page setup — landscape fits all bracket sizes better */
@@ -694,12 +854,13 @@ input[readonly] { color: var(--text-2); cursor: text; }
 
   /* Hide everything except the bracket */
   .app-header,
+  .bracket-toolbar,
   .round-labels,
   #champion-display,
   .modal-overlay,
   #vote-now-btn,
   #manage-bracket-btn,
-  #print-btn,
+  #export-btn,
   #bracket-back-btn {
     display: none !important;
   }

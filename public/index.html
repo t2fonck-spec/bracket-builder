@@ -87,9 +87,15 @@
     </header>
     <main class="manage-main">
       <div class="manage-columns">
-        <!-- Add participants -->
+        <!-- Left: participants -->
         <section class="manage-section">
-          <h2>Participants <span id="manage-count-badge" class="badge"></span></h2>
+          <div class="section-header-row">
+            <h2>Participants <span id="manage-count-badge" class="badge"></span></h2>
+            <div class="section-header-actions">
+              <button class="btn btn-ghost btn-sm" id="shuffle-btn" title="Randomize seeding">⇌ Shuffle</button>
+              <button class="btn btn-ghost btn-sm" id="bulk-add-btn">Bulk Add</button>
+            </div>
+          </div>
           <form id="add-participant-form">
             <div class="field-row">
               <input type="text" id="p-name" placeholder="Name" required maxlength="50">
@@ -100,13 +106,16 @@
           </form>
           <ul id="participants-list" class="participants-list"></ul>
         </section>
-        <!-- Actions -->
+        <!-- Right: info + launch -->
         <section class="manage-section manage-actions-section">
-          <h2>Launch</h2>
+          <h2>Details</h2>
+          <div class="field">
+            <label for="bracket-desc">Description <span class="label-optional">(optional)</span></label>
+            <textarea id="bracket-desc" rows="3" placeholder="What is this bracket about?" maxlength="300"></textarea>
+          </div>
+          <h2 style="margin-top:16px">Launch</h2>
           <div id="manage-status-msg" class="status-msg"></div>
-          <button class="btn btn-primary btn-full" id="start-bracket-btn" disabled>
-            Start Bracket
-          </button>
+          <button class="btn btn-primary btn-full" id="start-bracket-btn" disabled>Start Bracket</button>
           <div class="share-block hidden" id="share-block">
             <label>Public Link</label>
             <div class="copy-row">
@@ -123,16 +132,40 @@
   <div id="bracket-view" class="view hidden">
     <header class="app-header">
       <button class="btn btn-ghost btn-sm" id="bracket-back-btn">← Back</button>
+      <!-- Inline-editable title -->
       <div class="header-brand small">
-        <span id="bracket-title"></span>
+        <span id="bracket-title" class="bracket-title-editable" title="Click to edit"></span>
       </div>
       <div class="header-actions">
         <span id="bracket-status-badge" class="badge"></span>
         <button class="btn btn-gold btn-sm hidden" id="vote-now-btn">Vote Now</button>
         <button class="btn btn-ghost btn-sm hidden" id="manage-bracket-btn">Manage</button>
-        <button class="btn btn-ghost btn-sm" id="print-btn" title="Print / Save PDF">⎙ PDF</button>
+        <button class="btn btn-ghost btn-sm" id="export-btn" title="Export">⬇ Export</button>
       </div>
     </header>
+    <!-- Display toggles toolbar -->
+    <div id="bracket-toolbar" class="bracket-toolbar hidden">
+      <div class="toolbar-group">
+        <label class="toggle-pill">
+          <input type="checkbox" id="toggle-seeds" checked>
+          <span>Seeds</span>
+        </label>
+        <label class="toggle-pill">
+          <input type="checkbox" id="toggle-scores" checked>
+          <span>Scores</span>
+        </label>
+        <label class="toggle-pill">
+          <input type="checkbox" id="toggle-round-titles" checked>
+          <span>Round Labels</span>
+        </label>
+      </div>
+      <div class="toolbar-group zoom-group">
+        <button class="btn btn-ghost btn-sm" id="zoom-out-btn">−</button>
+        <span id="zoom-label" class="zoom-label">100%</span>
+        <button class="btn btn-ghost btn-sm" id="zoom-in-btn">+</button>
+        <button class="btn btn-ghost btn-sm" id="zoom-fit-btn">Fit</button>
+      </div>
+    </div>
     <main class="bracket-main">
       <div id="bracket-round-labels" class="round-labels"></div>
       <div class="bracket-scroll-wrap">
@@ -198,6 +231,70 @@
     </div>
   </div>
 
+  <!-- ── Bulk Add Modal ────────────────────────────────────── -->
+  <div id="bulk-modal" class="modal-overlay hidden" role="dialog" aria-modal="true">
+    <div class="modal-box modal-box-sm">
+      <div class="modal-header">
+        <h2>Bulk Add Participants</h2>
+        <button class="modal-close" id="bulk-modal-close">✕</button>
+      </div>
+      <div class="field">
+        <label for="bulk-names">One name per line</label>
+        <textarea id="bulk-names" rows="10" placeholder="Team Alpha&#10;Team Beta&#10;Team Gamma&#10;…"></textarea>
+      </div>
+      <div id="bulk-error" class="form-error hidden" style="margin-top:8px"></div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" id="bulk-cancel-btn">Cancel</button>
+        <button class="btn btn-primary" id="bulk-submit-btn">Add Participants</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Export Modal ──────────────────────────────────────── -->
+  <div id="export-modal" class="modal-overlay hidden" role="dialog" aria-modal="true">
+    <div class="modal-box modal-box-sm">
+      <div class="modal-header">
+        <h2>Export Bracket</h2>
+        <button class="modal-close" id="export-modal-close">✕</button>
+      </div>
+      <div class="field">
+        <label>Format</label>
+        <div class="export-options" id="export-options">
+          <label class="export-option selected" data-fmt="pdf">
+            <input type="radio" name="export-fmt" value="pdf" checked>
+            <span class="export-icon">📄</span>
+            <span>PDF</span>
+          </label>
+          <label class="export-option" data-fmt="png">
+            <input type="radio" name="export-fmt" value="png">
+            <span class="export-icon">🖼</span>
+            <span>PNG</span>
+          </label>
+          <label class="export-option" data-fmt="jpg">
+            <input type="radio" name="export-fmt" value="jpg">
+            <span class="export-icon">📷</span>
+            <span>JPG</span>
+          </label>
+        </div>
+      </div>
+      <div id="pdf-settings" class="field">
+        <label>PDF Layout</label>
+        <div class="radio-row">
+          <label class="radio-opt"><input type="radio" name="pdf-layout" value="landscape" checked> Landscape</label>
+          <label class="radio-opt"><input type="radio" name="pdf-layout" value="portrait"> Portrait</label>
+        </div>
+      </div>
+      <div class="field">
+        <label for="export-filename">File Name</label>
+        <input type="text" id="export-filename" placeholder="bracket.pdf">
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" id="export-cancel-btn">Cancel</button>
+        <button class="btn btn-primary" id="export-confirm-btn">Download</button>
+      </div>
+    </div>
+  </div>
+
   <!-- ── Vote Modal ────────────────────────────────────────── -->
   <div id="vote-modal" class="modal-overlay hidden" role="dialog" aria-modal="true">
     <div class="modal-box vote-modal-box">
@@ -232,7 +329,7 @@
     </div>
   </div>
 
-  <!-- ── Advance Confirm Modal ─────────────────────────────── -->
+  <!-- ── Advance / Rollback Modal ──────────────────────────── -->
   <div id="advance-modal" class="modal-overlay hidden" role="dialog" aria-modal="true">
     <div class="modal-box modal-box-sm">
       <div class="modal-header">
@@ -247,6 +344,7 @@
     </div>
   </div>
 
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js" crossorigin="anonymous"></script>
   <script src="/app.js"></script>
 </body>
 </html>

@@ -4,14 +4,15 @@
 const state = {
   user: null,
   token: null,
-  view: null,        // 'auth' | 'dashboard' | 'manage' | 'bracket'
-  bracketData: null, // { bracket, participants, matchups, isOwner }
+  view: null,
+  bracketData: null,
   currentSlug: null,
   managingSlug: null,
-  pendingAdvance: null,  // { matchup_id, winner_id, winner_name }
   voteQueue: [],
   voteIndex: 0,
   pollTimer: null,
+  zoom: 1,
+  display: { seeds: true, scores: true, roundTitles: true }, // persisted to localStorage
 };
 
 // ─── CSS helpers ─────────────────────────────────────────────────────────────
@@ -45,7 +46,12 @@ function loadAuth() {
     state.token = localStorage.getItem('bb_token');
     const raw = localStorage.getItem('bb_user');
     state.user = raw ? JSON.parse(raw) : null;
+    const disp = localStorage.getItem('bb_display');
+    if (disp) state.display = { ...state.display, ...JSON.parse(disp) };
   } catch {}
+}
+function saveDisplay() {
+  localStorage.setItem('bb_display', JSON.stringify(state.display));
 }
 function saveAuth(token, user) {
   state.token = token;
@@ -307,29 +313,13 @@ async function showManageView(slug) {
   state.managingSlug = slug;
   showView('manage');
   window.history.pushState({}, '', '/');
-
   $('manage-title').textContent = 'Loading…';
   $('participants-list').innerHTML = '';
   hide('share-block');
   $('start-bracket-btn').disabled = true;
-
   try {
     const data = await api('GET', `/api/brackets/${slug}`);
-    const { bracket, participants } = data;
-
-    $('manage-title').textContent = bracket.title;
-    $('manage-size-badge').textContent = `${bracket.size}-team`;
-    $('manage-size-badge').className = `badge ${bracket.tier === 'pro' ? 'badge-pro' : 'badge-free'}`;
-
-    renderParticipants(participants, bracket);
-    updateManageStatus(participants.length, bracket);
-
-    // Show share link if not in setup
-    if (bracket.status !== 'setup') {
-      $('share-url').value = location.origin + '/' + bracket.slug;
-      show('share-block');
-      $('start-bracket-btn').classList.add('hidden');
-    }
+    await showManageViewWithData(data);
   } catch (e) {
     alert('Failed to load bracket: ' + e.message);
     await showDashboard();
@@ -339,20 +329,40 @@ async function showManageView(slug) {
 function renderParticipants(participants, bracket) {
   const list = $('participants-list');
   list.innerHTML = '';
+  const canEdit = bracket.status === 'setup';
   for (const p of participants) {
     const li = document.createElement('li');
     li.className = 'participant-item';
     li.dataset.id = p.id;
+    li.dataset.seed = p.seed;
+    if (canEdit) li.draggable = true;
     li.innerHTML = `
+      ${canEdit ? '<span class="drag-handle" title="Drag to reorder">⠿</span>' : ''}
       <span class="participant-seed">#${p.seed}</span>
       ${p.img
         ? `<img class="participant-img" src="${esc(p.img)}" alt="" onerror="this.style.display='none'">`
         : `<div class="participant-img-placeholder">${esc(p.name[0].toUpperCase())}</div>`
       }
       <span class="participant-name">${esc(p.name)}</span>
-      ${bracket.status === 'setup' ? `<button class="btn btn-danger btn-sm" data-pid="${p.id}">✕</button>` : ''}
+      ${canEdit ? `<button class="btn btn-danger btn-sm" data-pid="${p.id}">✕</button>` : ''}
     `;
     list.appendChild(li);
+  }
+  if (canEdit) attachDragHandlers();
+}
+
+async function showManageViewWithData(data) {
+  const { bracket, participants } = data;
+  $('manage-title').textContent = bracket.title;
+  $('manage-size-badge').textContent = `${bracket.size}-team`;
+  $('manage-size-badge').className = `badge ${bracket.tier === 'pro' ? 'badge-pro' : 'badge-free'}`;
+  $('bracket-desc').value = bracket.description || '';
+  renderParticipants(participants, bracket);
+  updateManageStatus(participants.length, bracket);
+  if (bracket.status !== 'setup') {
+    $('share-url').value = location.origin + '/' + bracket.slug;
+    show('share-block');
+    $('start-bracket-btn').classList.add('hidden');
   }
 }
 
@@ -369,8 +379,7 @@ $('participants-list').addEventListener('click', async e => {
 async function refreshManageView() {
   try {
     const data = await api('GET', `/api/brackets/${state.managingSlug}`);
-    renderParticipants(data.participants, data.bracket);
-    updateManageStatus(data.participants.length, data.bracket);
+    await showManageViewWithData(data);
   } catch {}
 }
 
@@ -428,6 +437,85 @@ $('start-bracket-btn').addEventListener('click', async () => {
 
 $('manage-back-btn').addEventListener('click', () => showDashboard());
 
+// ─── Description auto-save ────────────────────────────────────────────────────
+let _descTimer;
+$('bracket-desc').addEventListener('input', () => {
+  clearTimeout(_descTimer);
+  _descTimer = setTimeout(async () => {
+    const desc = $('bracket-desc').value.trim();
+    try { await api('PATCH', `/api/brackets/${state.managingSlug}`, { description: desc }); } catch {}
+  }, 800);
+});
+
+// ─── Shuffle ─────────────────────────────────────────────────────────────────
+$('shuffle-btn').addEventListener('click', async () => {
+  try {
+    await api('POST', `/api/brackets/${state.managingSlug}/participants/shuffle`);
+    await refreshManageView();
+  } catch (e) { alert(e.message); }
+});
+
+// ─── Bulk Add Modal ───────────────────────────────────────────────────────────
+$('bulk-add-btn').addEventListener('click', () => {
+  $('bulk-names').value = '';
+  hide('bulk-error');
+  show('bulk-modal');
+  $('bulk-names').focus();
+});
+$('bulk-modal-close').addEventListener('click', () => hide('bulk-modal'));
+$('bulk-cancel-btn').addEventListener('click', () => hide('bulk-modal'));
+
+$('bulk-submit-btn').addEventListener('click', async () => {
+  hide('bulk-error');
+  const names = $('bulk-names').value.split('\n').map(n => n.trim()).filter(Boolean);
+  if (!names.length) return;
+  try {
+    const { added } = await api('POST', `/api/brackets/${state.managingSlug}/participants/bulk`, { names });
+    hide('bulk-modal');
+    await refreshManageView();
+    if (added.length < names.length) {
+      alert(`Added ${added.length} of ${names.length} (bracket may now be full).`);
+    }
+  } catch (e) {
+    $('bulk-error').textContent = e.message;
+    show('bulk-error');
+  }
+});
+
+// ─── Drag-to-reorder participants ─────────────────────────────────────────────
+let _dragId = null;
+
+function attachDragHandlers() {
+  const list = $('participants-list');
+  list.querySelectorAll('.participant-item[draggable]').forEach(item => {
+    item.addEventListener('dragstart', e => {
+      _dragId = item.dataset.id;
+      item.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+    });
+    item.addEventListener('dragend', () => item.classList.remove('dragging'));
+    item.addEventListener('dragover', e => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      list.querySelectorAll('.participant-item').forEach(i => i.classList.remove('drag-over'));
+      item.classList.add('drag-over');
+    });
+    item.addEventListener('dragleave', () => item.classList.remove('drag-over'));
+    item.addEventListener('drop', async e => {
+      e.preventDefault();
+      item.classList.remove('drag-over');
+      const targetId = item.dataset.id;
+      if (!_dragId || _dragId === targetId) return;
+      const targetSeed = Number(item.dataset.seed);
+      try {
+        await api('PATCH', `/api/brackets/${state.managingSlug}/participants/${_dragId}/seed`, { new_seed: targetSeed });
+        await refreshManageView();
+      } catch (err) { alert(err.message); }
+      _dragId = null;
+    });
+  });
+}
+
 $('copy-url-btn').addEventListener('click', () => {
   const input = $('share-url');
   input.select();
@@ -463,6 +551,11 @@ async function showBracketView(data) {
   };
 
   $('manage-bracket-btn').onclick = () => showManageView(bracket.slug);
+
+  initToolbar(isOwner);
+  state.zoom = 1;
+  updateZoomLabel();
+  attachTitleEdit();
 
   renderBracket(bracket, participants, matchups, isOwner);
   renderChampion(bracket, participants, matchups);
@@ -535,13 +628,16 @@ function renderBracket(bracket, participants, matchups, isOwner) {
   // Round labels
   const labelsEl = $('bracket-round-labels');
   labelsEl.innerHTML = '';
-  for (let r = 1; r <= totalRounds; r++) {
-    const roundNames = { [totalRounds]: 'Final', [totalRounds - 1]: 'Semis', [totalRounds - 2]: 'Quarters' };
-    const label = roundNames[r] || `Round ${r}`;
-    const div = document.createElement('div');
-    div.className = 'round-label';
-    div.textContent = label;
-    labelsEl.appendChild(div);
+  setHidden('bracket-round-labels', !state.display.roundTitles);
+  if (state.display.roundTitles) {
+    for (let r = 1; r <= totalRounds; r++) {
+      const roundNames = { [totalRounds]: 'Final', [totalRounds - 1]: 'Semis', [totalRounds - 2]: 'Quarters' };
+      const label = roundNames[r] || `Round ${r}`;
+      const div = document.createElement('div');
+      div.className = 'round-label';
+      div.textContent = label;
+      labelsEl.appendChild(div);
+    }
   }
 
   // Scale & center after paint
@@ -621,14 +717,20 @@ function buildSlot(m, p, side, winnerId, votes, isOwner, bracket) {
   const img = p.img
     ? `<img class="slot-img" src="${esc(p.img)}" alt="" loading="lazy" onerror="this.style.display='none'">`
     : `<div class="slot-img-ph"></div>`;
-  const voteStr = votes > 0 ? `<span class="slot-votes">${votes}</span>` : '';
+
+  const seedStr  = state.display.seeds  ? `<span class="slot-seed">${p.seed}</span>` : '';
+  const voteCount = votes > 0 ? votes : 0;
+  const scoreVal  = side === 'a' ? m.score_a : m.score_b;
+  const scoreStr  = state.display.scores && isOwner && bracket.status === 'active' && !winnerId
+    ? `<input class="score-input" type="number" min="0" max="9999" value="${scoreVal ?? ''}" data-mid="${m.id}" data-side="${side}" placeholder="–">`
+    : (state.display.scores && scoreVal !== null && scoreVal !== undefined)
+      ? `<span class="slot-score">${scoreVal}</span>`
+      : (state.display.scores && voteCount > 0 ? `<span class="slot-votes">${voteCount}</span>` : '');
 
   const canAdvance = isOwner && !winnerId && bracket.status === 'active' && m.participant_a_id && m.participant_b_id;
   const advanceBtn = canAdvance
     ? `<button class="slot-advance-btn slot-advance" data-pid="${p.id}" title="Advance ${esc(p.name)}">✓</button>`
     : '';
-
-  // Rollback button: only on the winning slot, only for owner
   const canRollback = isOwner && isWinner;
   const rollbackBtn = canRollback
     ? `<button class="slot-advance-btn slot-rollback" data-mid="${m.id}" title="Roll back this result">↩</button>`
@@ -636,10 +738,10 @@ function buildSlot(m, p, side, winnerId, votes, isOwner, bracket) {
 
   return `
     <div class="matchup-slot ${cls}">
-      <span class="slot-seed">${p.seed}</span>
+      ${seedStr}
       ${img}
       <span class="slot-name">${esc(p.name)}</span>
-      ${voteStr}
+      ${scoreStr}
       ${advanceBtn}${rollbackBtn}
     </div>
   `;
@@ -865,7 +967,7 @@ $('vote-skip-btn').addEventListener('click', () => {
 $('vote-modal-close').addEventListener('click', () => hide('vote-modal'));
 
 // Close modals on overlay click
-['create-modal', 'vote-modal', 'advance-modal'].forEach(id => {
+['create-modal', 'vote-modal', 'advance-modal', 'bulk-modal', 'export-modal'].forEach(id => {
   $(id).addEventListener('click', e => {
     if (e.target === $(id)) $(id).classList.add('hidden');
   });
@@ -888,7 +990,7 @@ function esc(str) {
 }
 
 // ─── Print / PDF ──────────────────────────────────────────────────────────────
-$('print-btn').addEventListener('click', printBracket);
+// (triggered by export modal when PDF is selected)
 
 function printBracket() {
   if (!state.bracketData) return;
@@ -939,6 +1041,217 @@ function printBracket() {
 
   // Redraw canvas back at screen scale
   requestAnimationFrame(() => scaleBracket(totalW, totalH));
+}
+
+// ─── Bracket Toolbar — toggles ────────────────────────────────────────────────
+function initToolbar(isOwner) {
+  const toolbar = $('bracket-toolbar');
+  setHidden('bracket-toolbar', !isOwner && false); // always show toolbar on bracket view
+  toolbar.classList.remove('hidden');
+
+  // Sync checkboxes to state
+  $('toggle-seeds').checked       = state.display.seeds;
+  $('toggle-scores').checked      = state.display.scores;
+  $('toggle-round-titles').checked = state.display.roundTitles;
+
+  $('toggle-seeds').onchange = () => {
+    state.display.seeds = $('toggle-seeds').checked;
+    saveDisplay();
+    rerenderBracket();
+  };
+  $('toggle-scores').onchange = () => {
+    state.display.scores = $('toggle-scores').checked;
+    saveDisplay();
+    rerenderBracket();
+  };
+  $('toggle-round-titles').onchange = () => {
+    state.display.roundTitles = $('toggle-round-titles').checked;
+    saveDisplay();
+    rerenderBracket();
+  };
+}
+
+function rerenderBracket() {
+  if (!state.bracketData) return;
+  const { bracket, participants, matchups, isOwner } = state.bracketData;
+  renderBracket(bracket, participants, matchups, isOwner);
+}
+
+// ─── Zoom Controls ────────────────────────────────────────────────────────────
+function updateZoomLabel() {
+  $('zoom-label').textContent = Math.round(state.zoom * 100) + '%';
+}
+
+$('zoom-in-btn').addEventListener('click', () => {
+  state.zoom = Math.min(2, +(state.zoom + 0.1).toFixed(1));
+  applyManualZoom();
+});
+$('zoom-out-btn').addEventListener('click', () => {
+  state.zoom = Math.max(0.2, +(state.zoom - 0.1).toFixed(1));
+  applyManualZoom();
+});
+$('zoom-fit-btn').addEventListener('click', () => {
+  if (!state.bracketData) return;
+  const { bracket } = state.bracketData;
+  const totalRounds = Math.log2(bracket.size);
+  const totalH = bracket.size * (CARD_H / 2) + V_PAD * 2;
+  const totalW = totalRounds * ROUND_GAP;
+  // Compute fit scale and set it
+  const availW = document.querySelector('.bracket-scroll-wrap').clientWidth - 32;
+  const availH = window.innerHeight - 220;
+  state.zoom = Math.min(1, availW / totalW, availH / totalH);
+  applyManualZoom();
+});
+
+function applyManualZoom() {
+  const container = $('bracket-container');
+  const wrap      = document.querySelector('.bracket-scroll-wrap');
+  if (!container || !state.bracketData) return;
+  const { bracket } = state.bracketData;
+  const totalRounds = Math.log2(bracket.size);
+  const totalH = bracket.size * (CARD_H / 2) + V_PAD * 2;
+  container.style.transform  = `scale(${state.zoom})`;
+  container.style.transformOrigin = 'top left';
+  container.style.marginLeft = '0';
+  wrap.style.height = Math.ceil(totalH * state.zoom) + 'px';
+  updateZoomLabel();
+}
+
+// ─── Inline Title Editing ─────────────────────────────────────────────────────
+$('bracket-title').addEventListener('click', function() {
+  if (!state.bracketData?.isOwner) return;
+  const current = this.textContent;
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.value = current;
+  input.className = 'bracket-title-input';
+  input.maxLength = 80;
+  this.replaceWith(input);
+  input.focus();
+  input.select();
+
+  async function commit() {
+    const newTitle = input.value.trim() || current;
+    const span = document.createElement('span');
+    span.id = 'bracket-title';
+    span.className = 'bracket-title-editable';
+    span.title = 'Click to edit';
+    span.textContent = newTitle;
+    input.replaceWith(span);
+    attachTitleEdit();
+    if (newTitle !== current) {
+      try {
+        await api('PATCH', `/api/brackets/${state.currentSlug}`, { title: newTitle });
+        state.bracketData.bracket.title = newTitle;
+        document.title = newTitle;
+      } catch {}
+    }
+  }
+  input.addEventListener('blur', commit);
+  input.addEventListener('keydown', e => { if (e.key === 'Enter') input.blur(); if (e.key === 'Escape') { input.value = current; input.blur(); } });
+});
+
+function attachTitleEdit() {
+  const el = $('bracket-title');
+  if (el && state.bracketData?.isOwner) el.style.cursor = 'pointer';
+}
+
+// ─── Score Entry ──────────────────────────────────────────────────────────────
+// Scores are rendered inside matchup cards; owner can type and blur to save
+function handleScoreInput(e) {
+  const input = e.target;
+  if (!input.classList.contains('score-input')) return;
+  const { mid, side } = input.dataset;
+  const val = input.value === '' ? null : Number(input.value);
+  const body = side === 'a' ? { score_a: val } : { score_b: val };
+  api('PATCH', `/api/brackets/${state.currentSlug}/matchups/${mid}`, body).then(() => {
+    // Update local state
+    const m = state.bracketData.matchups.find(x => x.id === Number(mid));
+    if (m) { if (side === 'a') m.score_a = val; else m.score_b = val; }
+    // Re-render just the score display (no full re-render to avoid losing focus)
+  }).catch(() => {});
+}
+
+$('bracket-rounds').addEventListener('change', handleScoreInput);
+
+// ─── Export Modal ─────────────────────────────────────────────────────────────
+$('export-btn').addEventListener('click', () => {
+  if (!state.bracketData) return;
+  const slug = state.bracketData.bracket.slug;
+  $('export-filename').value = slug + '.pdf';
+  show('export-modal');
+});
+$('export-modal-close').addEventListener('click', () => hide('export-modal'));
+$('export-cancel-btn').addEventListener('click', () => hide('export-modal'));
+
+$('export-options').addEventListener('click', e => {
+  const opt = e.target.closest('.export-option');
+  if (!opt) return;
+  document.querySelectorAll('.export-option').forEach(o => o.classList.remove('selected'));
+  opt.classList.add('selected');
+  opt.querySelector('input').checked = true;
+  const fmt = opt.dataset.fmt;
+  $('export-filename').value = ($('export-filename').value || 'bracket').replace(/\.\w+$/, '') + '.' + fmt;
+  setHidden('pdf-settings', fmt !== 'pdf');
+});
+
+$('export-confirm-btn').addEventListener('click', async () => {
+  const fmt = document.querySelector('.export-option.selected')?.dataset.fmt || 'pdf';
+  hide('export-modal');
+  if (fmt === 'pdf') {
+    printBracket();
+  } else {
+    await exportImage(fmt);
+  }
+});
+
+async function exportImage(fmt) {
+  if (typeof html2canvas === 'undefined') { alert('Image export not available (html2canvas failed to load).'); return; }
+  const { bracket } = state.bracketData;
+  const totalRounds = Math.log2(bracket.size);
+  const totalH = bracket.size * (CARD_H / 2) + V_PAD * 2;
+  const totalW = totalRounds * ROUND_GAP;
+  const container  = $('bracket-container');
+  const wrap       = document.querySelector('.bracket-scroll-wrap');
+
+  // Temporarily remove scale for capture
+  const prevTransform = container.style.transform;
+  const prevMarginLeft = container.style.marginLeft;
+  const prevHeight = wrap.style.height;
+  container.style.transform  = 'none';
+  container.style.marginLeft = '0';
+  wrap.style.height = totalH + 'px';
+  drawBracketLines(bracket, state.bracketData.matchups, totalH, totalW);
+
+  try {
+    const canvas = await html2canvas(container, {
+      backgroundColor: '#0D0F1A',
+      scale: 2,
+      useCORS: true,
+      logging: false,
+      width: totalW,
+      height: totalH,
+    });
+    const mime = fmt === 'jpg' ? 'image/jpeg' : 'image/png';
+    const filename = ($('export-filename').value || 'bracket') + '';
+    const a = document.createElement('a');
+    a.href = canvas.toDataURL(mime, 0.95);
+    a.download = filename.endsWith('.' + fmt) ? filename : filename + '.' + fmt;
+    a.click();
+  } catch (e) {
+    alert('Export failed: ' + e.message);
+  } finally {
+    container.style.transform  = prevTransform;
+    container.style.marginLeft = prevMarginLeft;
+    wrap.style.height          = prevHeight;
+    requestAnimationFrame(() => {
+      const { bracket } = state.bracketData;
+      const totalRounds = Math.log2(bracket.size);
+      const totalH = bracket.size * (CARD_H / 2) + V_PAD * 2;
+      const totalW = totalRounds * ROUND_GAP;
+      scaleBracket(totalW, totalH);
+    });
+  }
 }
 
 // Re-scale on resize
