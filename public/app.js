@@ -887,6 +887,60 @@ function esc(str) {
   return String(str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
+// ─── Print / PDF ──────────────────────────────────────────────────────────────
+$('print-btn').addEventListener('click', printBracket);
+
+function printBracket() {
+  if (!state.bracketData) return;
+  const { bracket } = state.bracketData;
+  const totalRounds = Math.log2(bracket.size);
+  const totalH = bracket.size * (CARD_H / 2) + V_PAD * 2;
+  const totalW = totalRounds * ROUND_GAP;
+
+  const container = $('bracket-container');
+  const wrap      = document.querySelector('.bracket-scroll-wrap');
+
+  // Snapshot current styles
+  const prevTransform   = container.style.transform;
+  const prevMarginLeft  = container.style.marginLeft;
+  const prevWrapHeight  = wrap.style.height;
+
+  // Calculate a zoom level so the bracket fills ~90% of the landscape printable area
+  // Standard landscape printable area ≈ 257mm × 170mm at 96dpi ≈ 975 × 644px
+  const PRINT_W = 975;
+  const PRINT_H = 644;
+  const printZoom = Math.min(1, PRINT_W / totalW, PRINT_H / totalH).toFixed(3);
+
+  // Pass zoom to CSS and inject bracket title for the ::before pseudo
+  const bracketMain = document.querySelector('.bracket-main');
+  bracketMain.dataset.title  = bracket.title;
+  bracketMain.style.setProperty('--print-zoom', printZoom);
+
+  // Strip runtime scaling — print CSS takes over
+  container.style.transform  = 'none';
+  container.style.marginLeft = '0';
+  wrap.style.height          = totalH + 'px';
+
+  // Redraw canvas at full native resolution (no devicePixelRatio tricks needed)
+  drawBracketLines(bracket, state.bracketData.matchups, totalH, totalW);
+
+  // Set print title to bracket name
+  const prevTitle = document.title;
+  document.title  = bracket.title;
+
+  window.print();
+
+  // Restore after print dialog closes (synchronous in all browsers)
+  document.title             = prevTitle;
+  container.style.transform  = prevTransform;
+  container.style.marginLeft = prevMarginLeft;
+  wrap.style.height          = prevWrapHeight;
+  bracketMain.style.removeProperty('--print-zoom');
+
+  // Redraw canvas back at screen scale
+  requestAnimationFrame(() => scaleBracket(totalW, totalH));
+}
+
 // Re-scale on resize
 let _resizeTimer;
 window.addEventListener('resize', () => {

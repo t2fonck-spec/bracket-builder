@@ -670,6 +670,107 @@ input[readonly] { color: var(--text-2); cursor: text; }
 .view:not(.hidden) { animation: fadeIn 0.2s ease; }
 .modal-box { animation: fadeIn 0.2s ease; }
 
+/* ─── Print / PDF ────────────────────────────────────────────────────── */
+@media print {
+  /* Page setup — landscape fits all bracket sizes better */
+  @page {
+    size: landscape;
+    margin: 14mm 12mm;
+  }
+
+  /* Force white background so ink-saving mode doesn't gut the layout */
+  :root {
+    --bg:        #ffffff;
+    --surface:   #f4f4f6;
+    --surface-2: #eaeaec;
+    --border:    #cccccc;
+    --border-2:  #aaaaaa;
+    --gold:      #b8860b;     /* darker gold — readable on white */
+    --gold-dim:  rgba(184,134,11,0.12);
+    --text:      #111111;
+    --text-2:    #444444;
+    --text-3:    #888888;
+  }
+
+  /* Hide everything except the bracket */
+  .app-header,
+  .round-labels,
+  #champion-display,
+  .modal-overlay,
+  #vote-now-btn,
+  #manage-bracket-btn,
+  #print-btn,
+  #bracket-back-btn {
+    display: none !important;
+  }
+
+  body, html { background: #fff; }
+
+  #bracket-view {
+    min-height: unset;
+  }
+
+  .bracket-main {
+    padding: 0;
+    gap: 0;
+  }
+
+  /* Print title above bracket */
+  .bracket-main::before {
+    content: attr(data-title);
+    display: block;
+    font-size: 18pt;
+    font-weight: 800;
+    color: #111;
+    margin-bottom: 8mm;
+    text-align: center;
+    letter-spacing: -0.3px;
+  }
+
+  /* Let the bracket-scroll-wrap size to content */
+  .bracket-scroll-wrap {
+    overflow: visible !important;
+    height: auto !important;
+  }
+
+  /* Scale bracket to fill printable width using CSS zoom */
+  #bracket-container {
+    transform: none !important;
+    margin-left: 0 !important;
+    zoom: var(--print-zoom, 1);
+    transform-origin: top left;
+  }
+
+  /* Ensure canvas prints (some browsers need this) */
+  #bracket-lines {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* Card colours on white */
+  .matchup-card {
+    background: #f4f4f6;
+    border-color: #aaa;
+    break-inside: avoid;
+  }
+  .matchup-slot.winner { background: rgba(184,134,11,0.18); }
+  .matchup-slot.loser  { opacity: 0.5; }
+  .slot-advance-btn    { display: none !important; }
+  .slot-divider        { background: #ccc; }
+
+  /* Champion block if present */
+  .champion-display {
+    display: block !important;
+    page-break-before: avoid;
+    margin-top: 8mm;
+    text-align: center;
+  }
+  .champion-inner {
+    display: inline-flex;
+    border-color: var(--gold);
+  }
+}
+
 /* ─── Responsive ─────────────────────────────────────────────────────── */
 @media (max-width: 640px) {
   .dashboard-main, .manage-main { padding: 20px 16px; }
