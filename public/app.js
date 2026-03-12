@@ -1591,22 +1591,10 @@ document.addEventListener('click', e => {
 });
 
 // ─── Landing Page ─────────────────────────────────────────────────────────────
-(function() {
-  const now = new Date();
-  const start = new Date('2026-03-15');
-  const end = new Date('2026-04-08');
-  if (now >= start && now < end) show('ncaa-banner');
-})();
-
 $('landing-signup-btn')?.addEventListener('click', () => {
   hide('landing-view');
   show('auth-view');
   document.querySelector('.auth-tab[data-tab="register"]')?.click();
-});
-
-$('ncaa-banner-btn')?.addEventListener('click', () => {
-  hide('landing-view');
-  show('auth-view');
 });
 
 $('pricing-free-btn')?.addEventListener('click', () => {
