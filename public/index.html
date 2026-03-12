@@ -53,6 +53,7 @@
       <div class="header-actions">
         <span id="header-tier-badge"></span>
         <span id="header-email" class="header-email"></span>
+        <button class="btn btn-ghost btn-sm theme-toggle-btn" title="Toggle theme">☾</button>
         <button class="btn btn-ghost btn-sm" id="logout-btn">Logout</button>
       </div>
     </header>
@@ -83,6 +84,7 @@
       </div>
       <div class="header-actions">
         <span id="manage-size-badge" class="badge"></span>
+        <button class="btn btn-ghost btn-sm theme-toggle-btn" title="Toggle theme">☾</button>
       </div>
     </header>
     <main class="manage-main">
@@ -97,10 +99,16 @@
             </div>
           </div>
           <form id="add-participant-form">
-            <div class="field-row">
+            <div class="field-row upload-field-row">
               <input type="text" id="p-name" placeholder="Name" required maxlength="50">
-              <input type="url" id="p-img" placeholder="Image URL (optional)">
-              <button type="submit" class="btn btn-primary btn-sm">Add</button>
+              <div class="img-upload-group">
+                <button type="button" class="btn btn-ghost btn-sm" id="upload-img-btn">Upload Image</button>
+                <input type="file" id="p-img-file" accept="image/*" class="hidden">
+                <input type="url" id="p-img" placeholder="or paste URL">
+                <input type="hidden" id="p-img-url">
+                <img id="p-img-preview" class="upload-preview hidden" alt="preview">
+              </div>
+              <button type="submit" class="btn btn-primary btn-sm" id="add-p-btn">Add</button>
             </div>
             <div id="add-p-error" class="form-error hidden"></div>
           </form>
@@ -141,25 +149,19 @@
         <button class="btn btn-gold btn-sm hidden" id="vote-now-btn">Vote Now</button>
         <button class="btn btn-ghost btn-sm hidden" id="manage-bracket-btn">Manage</button>
         <button class="btn btn-ghost btn-sm" id="export-btn" title="Export">⬇ Export</button>
+        <button class="btn btn-ghost btn-sm theme-toggle-btn" title="Toggle theme">☾</button>
+        <button class="btn btn-ghost btn-sm" id="settings-btn" title="Display settings">⚙</button>
       </div>
     </header>
-    <!-- Display toggles toolbar -->
-    <div id="bracket-toolbar" class="bracket-toolbar hidden">
-      <div class="toolbar-group">
-        <label class="toggle-pill">
-          <input type="checkbox" id="toggle-seeds" checked>
-          <span>Seeds</span>
-        </label>
-        <label class="toggle-pill">
-          <input type="checkbox" id="toggle-scores" checked>
-          <span>Scores</span>
-        </label>
-        <label class="toggle-pill">
-          <input type="checkbox" id="toggle-round-titles" checked>
-          <span>Round Labels</span>
-        </label>
-      </div>
-      <div class="toolbar-group zoom-group">
+    <!-- Settings popover (replaces toolbar) -->
+    <div id="settings-popover" class="settings-popover hidden">
+      <div class="settings-popover-title">Display</div>
+      <label class="settings-row"><span>Seeds</span><input type="checkbox" id="toggle-seeds" checked></label>
+      <label class="settings-row"><span>Scores</span><input type="checkbox" id="toggle-scores" checked></label>
+      <label class="settings-row"><span>Round Labels</span><input type="checkbox" id="toggle-round-titles" checked></label>
+      <div class="settings-divider"></div>
+      <div class="settings-popover-title">Zoom</div>
+      <div class="settings-zoom-row">
         <button class="btn btn-ghost btn-sm" id="zoom-out-btn">−</button>
         <span id="zoom-label" class="zoom-label">100%</span>
         <button class="btn btn-ghost btn-sm" id="zoom-in-btn">+</button>
@@ -172,13 +174,6 @@
         <div id="bracket-container" class="bracket-container">
           <canvas id="bracket-lines" class="bracket-lines"></canvas>
           <div id="bracket-rounds" class="bracket-rounds"></div>
-        </div>
-      </div>
-      <div id="champion-display" class="champion-display hidden">
-        <div class="champion-inner">
-          <div class="champion-crown">🏆</div>
-          <div class="champion-label">Champion</div>
-          <div id="champion-name" class="champion-name"></div>
         </div>
       </div>
     </main>
@@ -341,6 +336,17 @@
         <button class="btn btn-ghost" id="advance-cancel-btn">Cancel</button>
         <button class="btn btn-primary" id="advance-confirm-btn">Confirm Winner</button>
       </div>
+    </div>
+  </div>
+
+  <!-- Champion Modal -->
+  <div id="champion-modal" class="champion-modal hidden" role="dialog" aria-modal="true">
+    <div class="champion-card">
+      <button id="champion-close" class="champion-close" aria-label="Close">✕</button>
+      <div class="champion-crown">🏆</div>
+      <div class="champion-label">Champion</div>
+      <img id="champion-img" class="champion-img hidden" alt="" loading="lazy">
+      <div id="champion-name" class="champion-name"></div>
     </div>
   </div>
 

@@ -12,6 +12,9 @@ const state = {
   voteIndex: 0,
   pollTimer: null,
   zoom: 1,
+  panX: 0,
+  panY: 0,
+  championDismissed: false,
   display: { seeds: true, scores: true, roundTitles: true }, // persisted to localStorage
 };
 
@@ -414,17 +417,70 @@ $('add-participant-form').addEventListener('submit', async e => {
   e.preventDefault();
   hide('add-p-error');
   const name = $('p-name').value.trim();
-  const img  = $('p-img').value.trim();
+  // Use uploaded URL first, then fall back to pasted URL
+  const img = $('p-img-url').value.trim() || $('p-img').value.trim();
   if (!name) return;
   try {
     await api('POST', `/api/brackets/${state.managingSlug}/participants`, { name, img: img || null });
     $('p-name').value = '';
     $('p-img').value = '';
+    $('p-img-url').value = '';
+    $('p-img-file').value = '';
+    $('p-img-preview').classList.add('hidden');
     $('p-name').focus();
     await refreshManageView();
   } catch (e) {
     $('add-p-error').textContent = e.message;
     show('add-p-error');
+  }
+});
+
+// ─── Image Upload for participants ────────────────────────────────────────────
+$('upload-img-btn').addEventListener('click', () => {
+  $('p-img-file').click();
+});
+
+$('p-img-file').addEventListener('change', async () => {
+  const file = $('p-img-file').files[0];
+  if (!file) return;
+  hide('add-p-error');
+
+  // 5MB guard
+  if (file.size > 5 * 1024 * 1024) {
+    $('add-p-error').textContent = 'Image must be under 5MB.';
+    show('add-p-error');
+    $('p-img-file').value = '';
+    return;
+  }
+
+  const addBtn = $('add-p-btn');
+  const uploadBtn = $('upload-img-btn');
+  addBtn.disabled = true;
+  uploadBtn.disabled = true;
+  uploadBtn.textContent = 'Uploading…';
+
+  try {
+    const fd = new FormData();
+    fd.append('image', file);
+    const res = await fetch('/api/upload', { method: 'POST', headers: { Authorization: 'Bearer ' + state.token }, body: fd });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `Upload failed (${res.status})`);
+
+    $('p-img-url').value = data.url;
+    $('p-img').value = '';
+
+    // Show preview
+    const preview = $('p-img-preview');
+    preview.src = data.url;
+    preview.classList.remove('hidden');
+  } catch (err) {
+    $('add-p-error').textContent = 'Upload failed: ' + err.message;
+    show('add-p-error');
+    $('p-img-file').value = '';
+  } finally {
+    addBtn.disabled = false;
+    uploadBtn.disabled = false;
+    uploadBtn.textContent = 'Upload Image';
   }
 });
 
@@ -553,7 +609,8 @@ async function showBracketView(data) {
   $('manage-bracket-btn').onclick = () => showManageView(bracket.slug);
 
   initToolbar(isOwner);
-  state.zoom = 1;
+  state.zoom = 1; state.panX = 0; state.panY = 0;
+  state.championDismissed = false;
   updateZoomLabel();
   attachTitleEdit();
 
@@ -568,8 +625,12 @@ async function showBracketView(data) {
         state.bracketData = fresh;
         renderBracket(fresh.bracket, fresh.participants, fresh.matchups, fresh.isOwner);
         renderChampion(fresh.bracket, fresh.participants, fresh.matchups);
+        const statusClass = { setup: 'badge-setup', active: 'badge-active', complete: 'badge-complete' }[fresh.bracket.status] || '';
+        $('bracket-status-badge').className = `badge ${statusClass}`;
+        $('bracket-status-badge').textContent = fresh.bracket.status;
         const active = fresh.matchups.some(m => !m.winner_id && m.participant_a_id && m.participant_b_id);
         setHidden('vote-now-btn', fresh.bracket.status !== 'active' || !active);
+        if (fresh.bracket.status !== 'active') { clearInterval(state.pollTimer); state.pollTimer = null; }
       } catch {}
     }, 15000);
   }
@@ -582,66 +643,118 @@ const CARD_W    = 176;
 const SPACER_W  = 48;
 const ROUND_GAP = CARD_W + SPACER_W;
 const V_PAD     = 16;
+const LABEL_H   = 24; // height reserved at top for column labels
 
-function calcMatchupPos(totalRounds, size, round, position) {
-  // 1-indexed round and position
-  const numMatchups = size / Math.pow(2, round);
-  const totalH = size * (CARD_H / 2) + V_PAD * 2;  // height scales with bracket size
-  const slotH  = (totalH - V_PAD * 2) / numMatchups;
-  const y = V_PAD + slotH * (position - 1) + (slotH - CARD_H) / 2;
-  const x = (round - 1) * ROUND_GAP;
-  return { x, y, centerY: V_PAD + slotH * (position - 1) + slotH / 2 };
+// Returns layout metrics for a two-sided bracket
+function calcTwosidedLayout(bracket) {
+  const totalRounds = Math.log2(bracket.size);
+  const sideRounds  = totalRounds - 1;
+  // Each side has size/2 participants stacked; height mirrors a single-sided half-bracket
+  const totalH = (bracket.size / 2) * (CARD_H / 2) + V_PAD * 2;
+  let totalW, FINAL_X;
+  if (sideRounds <= 0) {
+    // 2-team bracket: just a final, no side rounds
+    FINAL_X = 0;
+    totalW  = CARD_W;
+  } else {
+    // Gap from innermost side round's right/left edge to the final card
+    FINAL_X = (sideRounds - 1) * ROUND_GAP + CARD_W + SPACER_W;
+    totalW  = 2 * FINAL_X + CARD_W;
+  }
+  return { totalRounds, sideRounds, totalH, totalW, FINAL_X };
+}
+
+// Returns { x, y, centerY, side } for a matchup card in two-sided layout
+function getMatchupPos(m, bracket, layout) {
+  const { totalRounds, totalH, totalW, FINAL_X } = layout;
+  const r           = m.round;
+  const numMatchups  = bracket.size / Math.pow(2, r);
+  const halfMatchups = numMatchups / 2;
+
+  if (r === totalRounds) {
+    // Final: center horizontally, center vertically
+    const y = (totalH - CARD_H) / 2 + LABEL_H;
+    return { x: FINAL_X, y, centerY: totalH / 2 + LABEL_H, side: 'final' };
+  }
+
+  const isLeft   = m.position <= halfMatchups;
+  const localPos = isLeft ? m.position : m.position - halfMatchups;
+  const slotH    = (totalH - V_PAD * 2) / halfMatchups;
+  const y        = LABEL_H + V_PAD + slotH * (localPos - 1) + (slotH - CARD_H) / 2;
+  const centerY  = LABEL_H + V_PAD + slotH * (localPos - 1) + slotH / 2;
+  const x        = isLeft
+    ? (r - 1) * ROUND_GAP
+    : totalW - (r - 1) * ROUND_GAP - CARD_W;
+
+  return { x, y, centerY, side: isLeft ? 'left' : 'right' };
 }
 
 function renderBracket(bracket, participants, matchups, isOwner) {
-  const container = $('bracket-rounds');
-  container.innerHTML = '';
+  const rounds = $('bracket-rounds');
+  rounds.innerHTML = '';
 
-  const totalRounds = Math.log2(bracket.size);
-  const totalH = bracket.size * (CARD_H / 2) + V_PAD * 2;
-  const totalW = totalRounds * ROUND_GAP;
+  const layout = calcTwosidedLayout(bracket);
+  const { totalRounds, totalH, totalW } = layout;
+  const containerH = totalH + LABEL_H;
 
-  // Set container size
-  container.style.height = totalH + 'px';
-  container.style.width  = totalW + 'px';
+  rounds.style.height = containerH + 'px';
+  rounds.style.width  = totalW + 'px';
 
-  // Index participants for quick lookup
   const pMap = {};
   participants.forEach(p => { pMap[p.id] = p; });
 
-  // Render each round
+  for (const m of matchups) {
+    const pos  = getMatchupPos(m, bracket, layout);
+    const card = buildMatchupCard(m, pMap, isOwner, bracket);
+    card.style.top  = pos.y + 'px';
+    card.style.left = pos.x + 'px';
+    rounds.appendChild(card);
+  }
+
+  // Inline round labels (inside bracket-container so they pan/zoom with bracket)
+  renderRoundLabels(bracket, layout, totalW);
+
+  drawBracketLines(bracket, matchups, containerH, totalW, layout);
+  requestAnimationFrame(() => scaleBracket(totalW, containerH));
+}
+
+function renderRoundLabels(bracket, layout, totalW) {
+  // Remove previous label layer
+  const old = $('bracket-col-labels');
+  if (old) old.remove();
+  // Keep external labels hidden (replaced by inline ones)
+  setHidden('bracket-round-labels', true);
+  if (!state.display.roundTitles) return;
+
+  const { totalRounds, sideRounds, FINAL_X } = layout;
+  const el = document.createElement('div');
+  el.id = 'bracket-col-labels';
+  $('bracket-container').appendChild(el);
+
+  const nameMap = {
+    [totalRounds]:     'Final',
+    [totalRounds - 1]: 'Semis',
+    [totalRounds - 2]: 'Quarters',
+  };
+
   for (let r = 1; r <= totalRounds; r++) {
-    const roundMatchups = matchups.filter(m => m.round === r).sort((a, b) => a.position - b.position);
-
-    for (const m of roundMatchups) {
-      const pos = calcMatchupPos(totalRounds, bracket.size, r, m.position);
-      const card = buildMatchupCard(m, pMap, isOwner, bracket);
-      card.style.top  = pos.y + 'px';
-      card.style.left = pos.x + 'px';
-      container.appendChild(card);
+    const name = nameMap[r] || `Round ${r}`;
+    if (r === totalRounds) {
+      addColLabel(el, name, FINAL_X, CARD_W);
+    } else {
+      addColLabel(el, name, (r - 1) * ROUND_GAP, CARD_W);
+      addColLabel(el, name, totalW - (r - 1) * ROUND_GAP - CARD_W, CARD_W);
     }
   }
+}
 
-  // Draw connector lines
-  drawBracketLines(bracket, matchups, totalH, totalW);
-
-  // Round labels
-  const labelsEl = $('bracket-round-labels');
-  labelsEl.innerHTML = '';
-  setHidden('bracket-round-labels', !state.display.roundTitles);
-  if (state.display.roundTitles) {
-    for (let r = 1; r <= totalRounds; r++) {
-      const roundNames = { [totalRounds]: 'Final', [totalRounds - 1]: 'Semis', [totalRounds - 2]: 'Quarters' };
-      const label = roundNames[r] || `Round ${r}`;
-      const div = document.createElement('div');
-      div.className = 'round-label';
-      div.textContent = label;
-      labelsEl.appendChild(div);
-    }
-  }
-
-  // Scale & center after paint
-  requestAnimationFrame(() => scaleBracket(totalW, totalH));
+function addColLabel(container, text, x, width) {
+  const div = document.createElement('div');
+  div.className = 'bracket-col-label';
+  div.style.left  = x + 'px';
+  div.style.width = width + 'px';
+  div.textContent = text;
+  container.appendChild(div);
 }
 
 function scaleBracket(bracketW, bracketH) {
@@ -649,22 +762,26 @@ function scaleBracket(bracketW, bracketH) {
   const container = $('bracket-container');
   if (!wrap || !container) return;
 
-  const availW = wrap.clientWidth  - 32;
-  const availH = window.innerHeight - 220; // header + labels + padding
+  const availW = wrap.clientWidth;
+  const availH = wrap.clientHeight;
 
-  const scaleX = availW  / bracketW;
-  const scaleY = availH  / bracketH;
-  const scale  = Math.min(1, scaleX, scaleY); // never upscale
+  const scale = Math.min(1, availW / bracketW, availH / bracketH);
 
-  container.style.transform       = `scale(${scale})`;
-  container.style.transformOrigin = 'top left';
+  state.zoom = scale;
+  state.panX = Math.floor((availW - bracketW * scale) / 2);
+  state.panY = Math.floor((availH - bracketH * scale) / 2);
+  if (state.panY < 0) state.panY = V_PAD;
 
-  // Collapse the wrapper to the scaled size so page doesn't over-scroll
-  wrap.style.height = Math.ceil(bracketH * scale) + 'px';
+  applyTransform();
+  updateZoomLabel();
+}
 
-  // Center horizontally if there's leftover space
-  const scaledW = bracketW * scale;
-  container.style.marginLeft = scaledW < availW ? Math.floor((availW - scaledW) / 2) + 'px' : '0';
+function applyTransform() {
+  const container = $('bracket-container');
+  if (!container) return;
+  container.style.transform       = `translate(${state.panX}px, ${state.panY}px) scale(${state.zoom})`;
+  container.style.transformOrigin = '0 0';
+  container.style.marginLeft      = '0';
 }
 
 function buildMatchupCard(m, pMap, isOwner, bracket) {
@@ -747,7 +864,8 @@ function buildSlot(m, p, side, winnerId, votes, isOwner, bracket) {
   `;
 }
 
-function drawBracketLines(bracket, matchups, totalH, totalW) {
+function drawBracketLines(bracket, matchups, totalH, totalW, layout) {
+  if (!layout) layout = calcTwosidedLayout(bracket);
   const canvas = $('bracket-lines');
   canvas.width  = totalW;
   canvas.height = totalH;
@@ -759,45 +877,65 @@ function drawBracketLines(bracket, matchups, totalH, totalW) {
   ctx.strokeStyle = '#323660';
   ctx.lineWidth = 1.5;
 
-  const totalRounds = Math.log2(bracket.size);
+  const { totalRounds } = layout;
   const byKey = {};
   matchups.forEach(m => { byKey[`${m.round}_${m.position}`] = m; });
 
   for (let r = 1; r < totalRounds; r++) {
     const roundMatchups = matchups.filter(m => m.round === r);
     for (const m of roundMatchups) {
-      const pos      = calcMatchupPos(totalRounds, bracket.size, r, m.position);
-      const nextPos  = Math.ceil(m.position / 2);
-      const parent   = byKey[`${r + 1}_${nextPos}`];
+      const pos    = getMatchupPos(m, bracket, layout);
+      const parent = byKey[`${r + 1}_${Math.ceil(m.position / 2)}`];
       if (!parent) continue;
-      const parentPos = calcMatchupPos(totalRounds, bracket.size, r + 1, parent.position);
-
-      const startX = pos.x + CARD_W;
-      const startY = pos.centerY;
-      const endX   = parentPos.x;
-      const endY   = parentPos.centerY;
-      const midX   = startX + SPACER_W / 2;
+      const ppos = getMatchupPos(parent, bracket, layout);
 
       ctx.beginPath();
-      ctx.moveTo(startX, startY);
-      ctx.lineTo(midX, startY);
-      ctx.lineTo(midX, endY);
-      ctx.lineTo(endX, endY);
+      if (pos.side === 'left') {
+        // Right edge of card → left edge of parent (going right / inward)
+        const startX = pos.x + CARD_W;
+        const endX   = ppos.x;
+        const midX   = (startX + endX) / 2;
+        ctx.moveTo(startX, pos.centerY);
+        ctx.lineTo(midX, pos.centerY);
+        ctx.lineTo(midX, ppos.centerY);
+        ctx.lineTo(endX, ppos.centerY);
+      } else {
+        // Left edge of card → right edge of parent (going left / inward)
+        const startX = pos.x;
+        const endX   = ppos.x + CARD_W;
+        const midX   = (startX + endX) / 2;
+        ctx.moveTo(startX, pos.centerY);
+        ctx.lineTo(midX, pos.centerY);
+        ctx.lineTo(midX, ppos.centerY);
+        ctx.lineTo(endX, ppos.centerY);
+      }
       ctx.stroke();
     }
   }
 }
 
 function renderChampion(bracket, participants, matchups) {
-  if (bracket.status !== 'complete') { hide('champion-display'); return; }
+  if (bracket.status !== 'complete') { hide('champion-modal'); return; }
+  if (state.championDismissed) return;
   const totalRounds = Math.log2(bracket.size);
   const final = matchups.find(m => m.round === totalRounds && m.winner_id);
-  if (!final) { hide('champion-display'); return; }
+  if (!final) { hide('champion-modal'); return; }
   const champ = participants.find(p => p.id === final.winner_id);
-  if (!champ) { hide('champion-display'); return; }
+  if (!champ) { hide('champion-modal'); return; }
   $('champion-name').textContent = champ.name;
-  show('champion-display');
+  if (champ.img) {
+    $('champion-img').src = champ.img;
+    $('champion-img').classList.remove('hidden');
+  } else {
+    $('champion-img').classList.add('hidden');
+  }
+  show('champion-modal');
 }
+
+$('champion-close').addEventListener('click', () => { state.championDismissed = true; hide('champion-modal'); });
+$('champion-modal').addEventListener('click', e => {
+  if (e.target === $('champion-modal')) { state.championDismissed = true; hide('champion-modal'); }
+});
 
 // ─── Advance / Rollback Modal ─────────────────────────────────────────────────
 let pendingAction = null; // { type: 'advance'|'rollback', matchup_id, winner_id?, winner_name? }
@@ -846,6 +984,10 @@ async function refreshBracketView() {
   state.bracketData = fresh;
   renderBracket(fresh.bracket, fresh.participants, fresh.matchups, fresh.isOwner);
   renderChampion(fresh.bracket, fresh.participants, fresh.matchups);
+  // Update status badge
+  const statusClass = { setup: 'badge-setup', active: 'badge-active', complete: 'badge-complete' }[fresh.bracket.status] || '';
+  $('bracket-status-badge').className = `badge ${statusClass}`;
+  $('bracket-status-badge').textContent = fresh.bracket.status;
   const active = fresh.matchups.some(m => !m.winner_id && m.participant_a_id && m.participant_b_id);
   setHidden('vote-now-btn', fresh.bracket.status !== 'active' || !active);
 }
@@ -995,9 +1137,8 @@ function esc(str) {
 function printBracket() {
   if (!state.bracketData) return;
   const { bracket } = state.bracketData;
-  const totalRounds = Math.log2(bracket.size);
-  const totalH = bracket.size * (CARD_H / 2) + V_PAD * 2;
-  const totalW = totalRounds * ROUND_GAP;
+  const { totalW, totalH: _totalH } = calcTwosidedLayout(bracket);
+  const totalH = _totalH + LABEL_H;
 
   const container = $('bracket-container');
   const wrap      = document.querySelector('.bracket-scroll-wrap');
@@ -1005,7 +1146,6 @@ function printBracket() {
   // Snapshot current styles
   const prevTransform   = container.style.transform;
   const prevMarginLeft  = container.style.marginLeft;
-  const prevWrapHeight  = wrap.style.height;
 
   // Calculate a zoom level so the bracket fills ~90% of the landscape printable area
   // Standard landscape printable area ≈ 257mm × 170mm at 96dpi ≈ 975 × 644px
@@ -1021,7 +1161,6 @@ function printBracket() {
   // Strip runtime scaling — print CSS takes over
   container.style.transform  = 'none';
   container.style.marginLeft = '0';
-  wrap.style.height          = totalH + 'px';
 
   // Redraw canvas at full native resolution (no devicePixelRatio tricks needed)
   drawBracketLines(bracket, state.bracketData.matchups, totalH, totalW);
@@ -1036,22 +1175,17 @@ function printBracket() {
   document.title             = prevTitle;
   container.style.transform  = prevTransform;
   container.style.marginLeft = prevMarginLeft;
-  wrap.style.height          = prevWrapHeight;
   bracketMain.style.removeProperty('--print-zoom');
 
   // Redraw canvas back at screen scale
   requestAnimationFrame(() => scaleBracket(totalW, totalH));
 }
 
-// ─── Bracket Toolbar — toggles ────────────────────────────────────────────────
+// ─── Bracket Settings — toggles ───────────────────────────────────────────────
 function initToolbar(isOwner) {
-  const toolbar = $('bracket-toolbar');
-  setHidden('bracket-toolbar', !isOwner && false); // always show toolbar on bracket view
-  toolbar.classList.remove('hidden');
-
   // Sync checkboxes to state
-  $('toggle-seeds').checked       = state.display.seeds;
-  $('toggle-scores').checked      = state.display.scores;
+  $('toggle-seeds').checked        = state.display.seeds;
+  $('toggle-scores').checked       = state.display.scores;
   $('toggle-round-titles').checked = state.display.roundTitles;
 
   $('toggle-seeds').onchange = () => {
@@ -1082,40 +1216,77 @@ function updateZoomLabel() {
   $('zoom-label').textContent = Math.round(state.zoom * 100) + '%';
 }
 
-$('zoom-in-btn').addEventListener('click', () => {
-  state.zoom = Math.min(2, +(state.zoom + 0.1).toFixed(1));
-  applyManualZoom();
-});
-$('zoom-out-btn').addEventListener('click', () => {
-  state.zoom = Math.max(0.2, +(state.zoom - 0.1).toFixed(1));
-  applyManualZoom();
-});
+// Zoom toward the center of the viewport
+function zoomToCenter(factor) {
+  const wrap = document.querySelector('.bracket-scroll-wrap');
+  if (!wrap) return;
+  const cx = wrap.clientWidth  / 2;
+  const cy = wrap.clientHeight / 2;
+  applyZoomToPoint(cx, cy, factor);
+}
+
+function applyZoomToPoint(mx, my, factor) {
+  const newZoom = Math.max(0.1, Math.min(4, state.zoom * factor));
+  const contentX = (mx - state.panX) / state.zoom;
+  const contentY = (my - state.panY) / state.zoom;
+  state.panX  = mx - contentX * newZoom;
+  state.panY  = my - contentY * newZoom;
+  state.zoom  = newZoom;
+  applyTransform();
+  updateZoomLabel();
+}
+
+$('zoom-in-btn').addEventListener('click', () => zoomToCenter(1.25));
+$('zoom-out-btn').addEventListener('click', () => zoomToCenter(1 / 1.25));
 $('zoom-fit-btn').addEventListener('click', () => {
   if (!state.bracketData) return;
   const { bracket } = state.bracketData;
-  const totalRounds = Math.log2(bracket.size);
-  const totalH = bracket.size * (CARD_H / 2) + V_PAD * 2;
-  const totalW = totalRounds * ROUND_GAP;
-  // Compute fit scale and set it
-  const availW = document.querySelector('.bracket-scroll-wrap').clientWidth - 32;
-  const availH = window.innerHeight - 220;
-  state.zoom = Math.min(1, availW / totalW, availH / totalH);
-  applyManualZoom();
+  const { totalW, totalH } = calcTwosidedLayout(bracket);
+  scaleBracket(totalW, totalH + LABEL_H);
 });
 
-function applyManualZoom() {
-  const container = $('bracket-container');
-  const wrap      = document.querySelector('.bracket-scroll-wrap');
-  if (!container || !state.bracketData) return;
-  const { bracket } = state.bracketData;
-  const totalRounds = Math.log2(bracket.size);
-  const totalH = bracket.size * (CARD_H / 2) + V_PAD * 2;
-  container.style.transform  = `scale(${state.zoom})`;
-  container.style.transformOrigin = 'top left';
-  container.style.marginLeft = '0';
-  wrap.style.height = Math.ceil(totalH * state.zoom) + 'px';
-  updateZoomLabel();
-}
+// ─── Wheel Zoom to Cursor ─────────────────────────────────────────────────────
+(function() {
+  const wrap = document.querySelector('.bracket-scroll-wrap');
+  if (!wrap) return;
+
+  wrap.addEventListener('wheel', e => {
+    if (!state.bracketData) return;
+    e.preventDefault();
+    const rect   = wrap.getBoundingClientRect();
+    const mx     = e.clientX - rect.left;
+    const my     = e.clientY - rect.top;
+    const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+    applyZoomToPoint(mx, my, factor);
+  }, { passive: false });
+})();
+
+// ─── Drag to Pan ──────────────────────────────────────────────────────────────
+(function() {
+  const wrap = document.querySelector('.bracket-scroll-wrap');
+  if (!wrap) return;
+  let dragging = false, startX = 0, startY = 0, startPanX = 0, startPanY = 0;
+
+  wrap.addEventListener('mousedown', e => {
+    // Only drag on background (not on interactive cards), or middle-click anywhere
+    if (e.button === 1 || (e.button === 0 && e.target.closest('.bracket-container') && !e.target.closest('.matchup-card'))) {
+      dragging = true;
+      startX = e.clientX; startY = e.clientY;
+      startPanX = state.panX; startPanY = state.panY;
+      wrap.style.cursor = 'grabbing';
+      e.preventDefault();
+    }
+  });
+  document.addEventListener('mousemove', e => {
+    if (!dragging) return;
+    state.panX = startPanX + (e.clientX - startX);
+    state.panY = startPanY + (e.clientY - startY);
+    applyTransform();
+  });
+  document.addEventListener('mouseup', () => {
+    if (dragging) { dragging = false; wrap.style.cursor = ''; }
+  });
+})();
 
 // ─── Inline Title Editing ─────────────────────────────────────────────────────
 $('bracket-title').addEventListener('click', function() {
@@ -1208,19 +1379,15 @@ $('export-confirm-btn').addEventListener('click', async () => {
 async function exportImage(fmt) {
   if (typeof html2canvas === 'undefined') { alert('Image export not available (html2canvas failed to load).'); return; }
   const { bracket } = state.bracketData;
-  const totalRounds = Math.log2(bracket.size);
-  const totalH = bracket.size * (CARD_H / 2) + V_PAD * 2;
-  const totalW = totalRounds * ROUND_GAP;
+  const { totalW, totalH: _totalH } = calcTwosidedLayout(bracket);
+  const totalH = _totalH + LABEL_H;
   const container  = $('bracket-container');
-  const wrap       = document.querySelector('.bracket-scroll-wrap');
 
   // Temporarily remove scale for capture
-  const prevTransform = container.style.transform;
+  const prevTransform  = container.style.transform;
   const prevMarginLeft = container.style.marginLeft;
-  const prevHeight = wrap.style.height;
   container.style.transform  = 'none';
   container.style.marginLeft = '0';
-  wrap.style.height = totalH + 'px';
   drawBracketLines(bracket, state.bracketData.matchups, totalH, totalW);
 
   try {
@@ -1243,14 +1410,7 @@ async function exportImage(fmt) {
   } finally {
     container.style.transform  = prevTransform;
     container.style.marginLeft = prevMarginLeft;
-    wrap.style.height          = prevHeight;
-    requestAnimationFrame(() => {
-      const { bracket } = state.bracketData;
-      const totalRounds = Math.log2(bracket.size);
-      const totalH = bracket.size * (CARD_H / 2) + V_PAD * 2;
-      const totalW = totalRounds * ROUND_GAP;
-      scaleBracket(totalW, totalH);
-    });
+    drawBracketLines(bracket, state.bracketData.matchups, totalH, totalW);
   }
 }
 
@@ -1261,12 +1421,60 @@ window.addEventListener('resize', () => {
   _resizeTimer = setTimeout(() => {
     if (state.bracketData) {
       const { bracket } = state.bracketData;
-      const totalRounds = Math.log2(bracket.size);
-      const totalH = bracket.size * (CARD_H / 2) + V_PAD * 2;
-      const totalW = totalRounds * ROUND_GAP;
-      scaleBracket(totalW, totalH);
+      const { totalW, totalH } = calcTwosidedLayout(bracket);
+      scaleBracket(totalW, totalH + LABEL_H);
     }
   }, 120);
+});
+
+// ─── Theme ────────────────────────────────────────────────────────────────────
+function applyTheme(theme) {
+  if (theme === 'light') {
+    document.documentElement.dataset.theme = 'light';
+  } else {
+    delete document.documentElement.dataset.theme;
+  }
+  // Update all theme toggle buttons
+  document.querySelectorAll('.theme-toggle-btn').forEach(btn => {
+    btn.textContent = theme === 'light' ? '☀' : '☾';
+  });
+}
+
+// Load saved theme on boot
+(function() {
+  const saved = localStorage.getItem('bb_theme');
+  if (saved === 'light') document.documentElement.dataset.theme = 'light';
+})();
+
+// Event delegation for theme toggle buttons
+document.addEventListener('click', e => {
+  if (!e.target.classList.contains('theme-toggle-btn')) return;
+  const isLight = document.documentElement.dataset.theme === 'light';
+  const next = isLight ? 'dark' : 'light';
+  localStorage.setItem('bb_theme', next);
+  applyTheme(next);
+});
+
+// Apply theme icons on initial load
+(function() {
+  const saved = localStorage.getItem('bb_theme') || 'dark';
+  document.querySelectorAll('.theme-toggle-btn').forEach(btn => {
+    btn.textContent = saved === 'light' ? '☀' : '☾';
+  });
+})();
+
+// ─── Settings Popover ─────────────────────────────────────────────────────────
+document.addEventListener('click', e => {
+  const popover = $('settings-popover');
+  const settingsBtn = $('settings-btn');
+  if (!popover) return;
+  if (e.target === settingsBtn || settingsBtn?.contains(e.target)) {
+    popover.classList.toggle('hidden');
+    return;
+  }
+  if (!popover.classList.contains('hidden') && !popover.contains(e.target)) {
+    popover.classList.add('hidden');
+  }
 });
 
 // ─── Boot ─────────────────────────────────────────────────────────────────────

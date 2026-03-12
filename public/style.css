@@ -28,6 +28,25 @@
   --round-gap:   calc(var(--card-w) + var(--spacer-w));
 }
 
+/* ─── Light Theme ────────────────────────────────────────────────────── */
+[data-theme="light"] {
+  --bg:        #F8F9FC;
+  --surface:   #FFFFFF;
+  --surface-2: #F0F2F7;
+  --border:    #DDE1EC;
+  --border-2:  #C5CADE;
+  --gold:      #B8860B;
+  --gold-light:#C9960D;
+  --gold-dim:  rgba(184, 134, 11, 0.12);
+  --gold-glow: rgba(184, 134, 11, 0.25);
+  --text:      #111827;
+  --text-2:    #4B5563;
+  --text-3:    #9CA3AF;
+  --success:   #16A34A;
+  --danger:    #DC2626;
+  --blue:      #2563EB;
+}
+
 /* ─── Reset ──────────────────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 html, body { height: 100%; }
@@ -332,9 +351,10 @@ input[readonly] { color: var(--text-2); cursor: text; }
 .round-labels {
   display: flex;
   gap: 0;
-  padding: 0 0 0 var(--card-w);
-  overflow-x: auto;
+  padding: 0 0 0 0;
+  overflow-x: visible;
   scrollbar-width: none;
+  min-width: max-content;
 }
 .round-label {
   flex-shrink: 0;
@@ -345,9 +365,14 @@ input[readonly] { color: var(--text-2); cursor: text; }
   letter-spacing: 1px;
   text-transform: uppercase;
   color: var(--text-3);
-  padding: 6px 0;
+  padding: 6px var(--spacer-w) 6px 0;
 }
-.bracket-scroll-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.bracket-scroll-wrap {
+  overflow: hidden;
+  height: calc(100vh - 200px);
+  cursor: grab;
+  user-select: none;
+}
 .bracket-container {
   position: relative;
   display: inline-block;
@@ -471,28 +496,76 @@ input[readonly] { color: var(--text-2); cursor: text; }
 }
 .matchup-card:hover .slot-advance-btn { opacity: 1; }
 
-/* Bracket scroll wrap height managed by JS */
-.bracket-scroll-wrap { overflow: visible; }
+/* bracket-scroll-wrap height is CSS-managed (calc(100vh - 200px)) */
 
-/* Champion */
-.champion-display {
-  margin-top: 24px;
-  text-align: center;
-  animation: fadeIn 0.6s ease;
+/* Inline column labels (rendered inside bracket-container so they pan/zoom with bracket) */
+#bracket-col-labels {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  pointer-events: none;
+  z-index: 3;
 }
-.champion-inner {
-  display: inline-flex;
+.bracket-col-label {
+  position: absolute;
+  top: 0;
+  height: 24px;
+  line-height: 24px;
+  text-align: center;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--text-3);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+/* Champion Modal (fixed center overlay) */
+.champion-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0,0,0,0.55);
+  backdrop-filter: blur(2px);
+  animation: fadeIn 0.25s ease;
+}
+.champion-card {
+  position: relative;
+  display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
-  background: var(--gold-dim);
+  gap: 10px;
+  background: var(--surface-2, var(--surface));
   border: 1px solid var(--gold);
   border-radius: var(--radius-lg);
-  padding: 24px 48px;
+  padding: 48px 64px 40px;
+  text-align: center;
+  min-width: 280px;
+  box-shadow: 0 24px 80px rgba(0,0,0,0.6);
 }
-.champion-crown { font-size: 36px; line-height: 1; }
+.champion-close {
+  position: absolute;
+  top: 12px; right: 14px;
+  background: none;
+  border: none;
+  color: var(--text-3);
+  font-size: 18px;
+  cursor: pointer;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: 4px;
+  transition: color 0.15s;
+}
+.champion-close:hover { color: var(--text); }
+.champion-crown { font-size: 48px; line-height: 1; }
 .champion-label { font-size: 11px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: var(--gold); }
-.champion-name  { font-size: 22px; font-weight: 800; color: var(--text); }
+.champion-img   { width: 80px; height: 80px; border-radius: 50%; object-fit: cover; border: 2px solid var(--gold); }
+.champion-name  { font-size: 26px; font-weight: 800; color: var(--text); max-width: 320px; }
 
 /* Round labels sync */
 .round-labels-sync { padding-left: 0; }
@@ -749,6 +822,50 @@ textarea:focus { border-color: var(--gold); }
   text-align: center;
 }
 
+/* ─── Settings Popover ───────────────────────────────────────────────── */
+.settings-popover {
+  position: fixed;
+  top: 64px; right: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-lg);
+  padding: 12px;
+  min-width: 200px;
+  z-index: 100;
+  box-shadow: var(--shadow-lg);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.settings-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 6px 4px; font-size: 14px; cursor: pointer; border-radius: var(--radius-sm);
+}
+.settings-row:hover { background: var(--surface-2); }
+.settings-row input[type=checkbox] { accent-color: var(--gold); width: 16px; height: 16px; }
+.settings-popover-title { font-size: 11px; font-weight: 700; color: var(--text-3); letter-spacing: 1px; text-transform: uppercase; padding: 4px; }
+.settings-divider { height: 1px; background: var(--border); margin: 4px 0; }
+.settings-zoom-row { display: flex; align-items: center; gap: 6px; padding: 4px; }
+
+/* ─── Image Upload UI ────────────────────────────────────────────────── */
+.upload-field-row { flex-wrap: wrap; }
+.img-upload-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  flex-wrap: wrap;
+}
+.img-upload-group input[type="url"] { flex: 1; min-width: 120px; }
+.upload-preview {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 2px solid var(--gold);
+  flex-shrink: 0;
+}
+
 /* ─── Inline title edit ──────────────────────────────────────────────── */
 .bracket-title-editable { cursor: pointer; }
 .bracket-title-editable:hover { color: var(--gold); }
@@ -855,6 +972,7 @@ textarea:focus { border-color: var(--gold); }
   /* Hide everything except the bracket */
   .app-header,
   .bracket-toolbar,
+  .settings-popover,
   .round-labels,
   #champion-display,
   .modal-overlay,
@@ -933,17 +1051,47 @@ textarea:focus { border-color: var(--gold); }
 }
 
 /* ─── Responsive ─────────────────────────────────────────────────────── */
-@media (max-width: 640px) {
-  .dashboard-main, .manage-main { padding: 20px 16px; }
+
+/* Tablet breakpoint */
+@media (max-width: 900px) {
   .manage-columns { grid-template-columns: 1fr; }
   .manage-actions-section { order: -1; }
+  .modal-box { padding: 20px; }
+}
+
+@media (max-width: 640px) {
+  .dashboard-main, .manage-main { padding: 20px 16px; }
   .field-row { flex-direction: column; }
+  .upload-field-row { flex-direction: column; }
+  .img-upload-group { width: 100%; }
   .header-email { display: none; }
   .size-options { gap: 6px; }
+
+  /* Vote modal: full-width on mobile */
+  .vote-modal-box { max-width: 100%; }
   .vote-matchup { gap: 8px; }
   .vote-side { padding: 12px 8px; }
   .vote-img-wrap { width: 48px; height: 48px; font-size: 18px; }
   .vote-name { font-size: 13px; }
-  :root { --card-w: 148px; --spacer-w: 36px; }
-  .round-label { width: calc(var(--card-w) + var(--spacer-w)); }
+
+  /* Export and bulk-add modals: full-width */
+  .modal-box-sm { max-width: 100%; }
+
+  /* Bracket card sizes on mobile */
+  :root { --card-w: 130px; --slot-h: 32px; --spacer-w: 36px; }
+  .slot-name { font-size: 11px; }
+  .slot-seed { font-size: 9px; }
+
+  /* Touch-friendly buttons: min 44px tall */
+  .btn { min-height: 44px; }
+  .btn-sm { min-height: 36px; padding: 8px 12px; }
+
+  /* Settings popover: full-width on mobile */
+  .settings-popover { right: 8px; left: 8px; min-width: unset; }
+}
+
+@media (max-width: 480px) {
+  /* Collapse logo text, keep icon */
+  .header-brand-text { display: none; }
+  .header-brand span:not(.header-brand-text) { display: none; }
 }
