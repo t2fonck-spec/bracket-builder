@@ -71,7 +71,7 @@ function clearAuth() {
 }
 
 // ─── View Management ──────────────────────────────────────────────────────────
-const VIEWS = ['auth-view', 'dashboard-view', 'manage-view', 'bracket-view', 'reset-password-view'];
+const VIEWS = ['auth-view', 'dashboard-view', 'manage-view', 'bracket-view', 'landing-view', 'reset-password-view'];
 function showView(name) {
   if (state.pollTimer) { clearInterval(state.pollTimer); state.pollTimer = null; }
   VIEWS.forEach(v => hide(v));
@@ -138,7 +138,11 @@ function checkUrlParams() {
 
 // ─── Auth View ────────────────────────────────────────────────────────────────
 function showAuth() {
-  showView('auth');
+  if (!state.user) {
+    showView('landing');
+  } else {
+    showView('auth');
+  }
 }
 
 let authMode = 'login';
@@ -1573,6 +1577,49 @@ document.addEventListener('click', e => {
   }
   if (!popover.classList.contains('hidden') && !popover.contains(e.target)) {
     popover.classList.add('hidden');
+  }
+});
+
+// ─── Landing Page ─────────────────────────────────────────────────────────────
+(function() {
+  const now = new Date();
+  const start = new Date('2026-03-15');
+  const end = new Date('2026-04-08');
+  if (now >= start && now < end) show('ncaa-banner');
+})();
+
+$('landing-signup-btn')?.addEventListener('click', () => {
+  hide('landing-view');
+  show('auth-view');
+  document.querySelector('.auth-tab[data-tab="register"]')?.click();
+});
+
+$('ncaa-banner-btn')?.addEventListener('click', () => {
+  hide('landing-view');
+  show('auth-view');
+});
+
+$('pricing-free-btn')?.addEventListener('click', () => {
+  hide('landing-view');
+  show('auth-view');
+});
+
+$('pricing-perbracket-btn')?.addEventListener('click', () => {
+  hide('landing-view');
+  show('auth-view');
+});
+
+$('pricing-lifetime-btn')?.addEventListener('click', async () => {
+  if (!state.user) {
+    hide('landing-view');
+    show('auth-view');
+    return;
+  }
+  try {
+    const data = await api('POST', '/api/checkout/lifetime');
+    if (data.url) window.location.href = data.url;
+  } catch (e) {
+    alert('Checkout failed: ' + e.message);
   }
 });
 
