@@ -19,6 +19,7 @@ const r2 = process.env.R2_ACCOUNT_ID ? new S3Client({
 }) : null;
 
 const app = express();
+app.set('trust proxy', 1);
 const DB_PATH = process.env.DB_PATH || './data/brackets.db';
 const fs = require('fs');
 fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
@@ -216,8 +217,9 @@ app.post('/api/forgot-password', authLimiter, async (req, res) => {
   const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email.toLowerCase().trim());
   if (!user || !transporter) return;
   const token = crypto.randomBytes(32).toString('hex');
+  const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
   db.prepare('UPDATE users SET reset_token = ?, reset_token_expires = ? WHERE id = ?')
-    .run(token, Date.now() + 3600000, user.id);
+    .run(tokenHash, Date.now() + 3600000, user.id);
   try {
     await transporter.sendMail({
       from: `Bracket Builder <noreply@${new URL(BASE_URL).hostname}>`,
@@ -236,8 +238,9 @@ app.post('/api/reset-password', async (req, res) => {
   const { token, password } = req.body || {};
   if (!token || !password) return res.status(400).json({ error: 'Token and password required' });
   if (password.length < 12) return res.status(400).json({ error: 'Password must be at least 12 characters' });
+  const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
   const user = db.prepare('SELECT * FROM users WHERE reset_token = ? AND reset_token_expires > ?')
-    .get(token, Date.now());
+    .get(tokenHash, Date.now());
   if (!user) return res.status(400).json({ error: 'Invalid or expired reset link' });
   const hash = await bcrypt.hash(password, 10);
   db.prepare('UPDATE users SET password_hash = ?, reset_token = NULL, reset_token_expires = NULL WHERE id = ?')
@@ -336,7 +339,7 @@ app.post('/api/brackets', auth, async (req, res) => {
       payment_method_types: ['card'],
       line_items: [{ price: priceMap[bracketSize], quantity: 1 }],
       mode: 'payment',
-      success_url: `${BASE_URL}/#manage/${slug}?payment=success`,
+      success_url: `${BASE_URL}/${slug}?payment=success`,
       cancel_url: `${BASE_URL}/?payment=cancelled`,
       metadata: { bracket_id: String(bracketId), user_id: String(req.user.id), purchase_type: 'per_bracket' },
     });
@@ -399,7 +402,7 @@ app.post('/api/brackets/ncaa', auth, async (req, res) => {
         payment_method_types: ['card'],
         line_items: [{ price: process.env.STRIPE_PRICE_64, quantity: 1 }],
         mode: 'payment',
-        success_url: `${BASE_URL}/#manage/${slug}?payment=success`,
+        success_url: `${BASE_URL}/${slug}?payment=success`,
         cancel_url: `${BASE_URL}/?payment=cancelled`,
         metadata: { bracket_id: String(bracketId), user_id: String(req.user.id), purchase_type: 'per_bracket' },
       });
@@ -803,6 +806,7 @@ app.post('/api/webhook', (req, res) => {
   }
   if (event.type === 'checkout.session.completed') {
     const session = event.data.object;
+    if (session.payment_status !== 'paid') return res.json({ received: true });
     const purchaseType = session.metadata?.purchase_type;
     if (purchaseType === 'lifetime') {
       const userId = parseInt(session.metadata?.user_id, 10);
@@ -819,6 +823,7 @@ app.post('/api/webhook', (req, res) => {
 });
 
 // ─── SPA Fallback ─────────────────────────────────────────────────────────────
+app.get('/reset-password', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 app.get('/:slug', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 

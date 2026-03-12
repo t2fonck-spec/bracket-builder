@@ -131,7 +131,12 @@ function checkUrlParams() {
     }).catch(() => {});
     window.history.replaceState({}, '', '/');
   }
-  if (params.get('cancelled') === '1') {
+  if (params.get('payment') === 'success') {
+    // Per-bracket payment completed — clean URL, bracket will load via slug route
+    const clean = window.location.pathname;
+    window.history.replaceState({}, '', clean);
+  }
+  if (params.get('cancelled') === '1' || params.get('payment') === 'cancelled') {
     window.history.replaceState({}, '', '/');
   }
 }
@@ -1220,7 +1225,7 @@ $('vote-skip-btn').addEventListener('click', () => {
 $('vote-modal-close').addEventListener('click', () => hide('vote-modal'));
 
 // Close modals on overlay click
-['create-modal', 'vote-modal', 'advance-modal', 'bulk-modal', 'export-modal'].forEach(id => {
+['create-modal', 'vote-modal', 'advance-modal', 'bulk-modal', 'export-modal', 'payment-modal'].forEach(id => {
   $(id).addEventListener('click', e => {
     if (e.target === $(id)) $(id).classList.add('hidden');
   });
