@@ -289,7 +289,7 @@ app.get('/api/brackets', auth, (req, res) => {
     SELECT b.*, COUNT(p.id) as participant_count
     FROM brackets b
     LEFT JOIN participants p ON p.bracket_id = b.id
-    WHERE b.user_id = ?
+    WHERE b.user_id = ? AND b.status != 'pending_payment'
     GROUP BY b.id
     ORDER BY b.created_at DESC
   `).all(req.user.id);
@@ -299,7 +299,7 @@ app.get('/api/brackets', auth, (req, res) => {
 app.post('/api/brackets', auth, (req, res) => {
   const { title, size } = req.body || {};
   if (!title?.trim()) return res.status(400).json({ error: 'Title required' });
-  const bracketSize = [8, 16, 32].includes(Number(size)) ? Number(size) : 8;
+  const bracketSize = [8, 16, 32, 64].includes(Number(size)) ? Number(size) : 8;
 
   if (bracketSize > 8 && req.user.tier === 'free') {
     return res.status(403).json({ error: 'Pro tier required for 16 and 32-team brackets', upgrade: true });
@@ -389,7 +389,11 @@ const SEEDINGS = {
   8:  [[1,8],[4,5],[3,6],[2,7]],
   16: [[1,16],[8,9],[5,12],[4,13],[6,11],[3,14],[7,10],[2,15]],
   32: [[1,32],[16,17],[8,25],[9,24],[5,28],[12,21],[13,20],[4,29],
-       [3,30],[14,19],[11,22],[6,27],[7,26],[10,23],[15,18],[2,31]]
+       [3,30],[14,19],[11,22],[6,27],[7,26],[10,23],[15,18],[2,31]],
+  64: [[1,16],[8,9],[5,12],[4,13],[6,11],[3,14],[7,10],[2,15],
+       [17,32],[24,25],[21,28],[20,29],[22,27],[19,30],[23,26],[18,31],
+       [33,48],[40,41],[37,44],[36,45],[38,43],[35,46],[39,42],[34,47],
+       [49,64],[56,57],[53,60],[52,61],[54,59],[51,62],[55,58],[50,63]]
 };
 
 app.post('/api/brackets/:slug/start', auth, (req, res) => {
