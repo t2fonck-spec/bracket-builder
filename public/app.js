@@ -731,11 +731,19 @@ function renderRoundLabels(bracket, layout, totalW) {
   el.id = 'bracket-col-labels';
   $('bracket-container').appendChild(el);
 
-  const nameMap = {
-    [totalRounds]:     'Final',
-    [totalRounds - 1]: 'Semis',
-    [totalRounds - 2]: 'Quarters',
-  };
+  let nameMap;
+  if (bracket.size === 64) {
+    nameMap = {
+      1: 'Round of 64', 2: 'Round of 32', 3: 'Sweet 16',
+      4: 'Elite Eight', 5: 'Final Four', 6: 'Championship'
+    };
+  } else {
+    nameMap = {
+      [totalRounds]:     'Final',
+      [totalRounds - 1]: 'Semis',
+      [totalRounds - 2]: 'Quarters',
+    };
+  }
 
   for (let r = 1; r <= totalRounds; r++) {
     const name = nameMap[r] || `Round ${r}`;
