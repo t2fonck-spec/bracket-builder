@@ -15,6 +15,7 @@ const state = {
   panX: 0,
   panY: 0,
   championDismissed: false,
+  pendingBracket: null,
   display: { seeds: true, scores: true, roundTitles: true }, // persisted to localStorage
 };
 
@@ -254,7 +255,14 @@ $('logout-btn').addEventListener('click', () => {
   showAuth();
 });
 
-$('upgrade-btn')?.addEventListener('click', startCheckout);
+$('upgrade-btn')?.addEventListener('click', async () => {
+  try {
+    const data = await api('POST', '/api/checkout/lifetime');
+    if (data.url) window.location.href = data.url;
+  } catch (e) {
+    alert('Checkout failed: ' + e.message);
+  }
+});
 
 // ─── Create Bracket Modal ─────────────────────────────────────────────────────
 $('new-bracket-btn').addEventListener('click', () => {
@@ -288,7 +296,7 @@ function closeCreateModal() {
 }
 $('create-modal-close').addEventListener('click', closeCreateModal);
 $('create-cancel-btn').addEventListener('click', closeCreateModal);
-$('size-upgrade-link')?.addEventListener('click', e => { e.preventDefault(); closeCreateModal(); startCheckout(); });
+$('size-upgrade-link')?.addEventListener('click', e => { e.preventDefault(); closeCreateModal(); show('payment-modal'); });
 
 $('create-form').addEventListener('submit', async e => {
   e.preventDefault();
@@ -297,18 +305,43 @@ $('create-form').addEventListener('submit', async e => {
   const size = Number(document.querySelector('.size-option.selected')?.dataset.size || 8);
   if (!title) return;
   try {
-    const bracket = await api('POST', '/api/brackets', { title, size });
-    closeCreateModal();
-    await showManageView(bracket.slug);
-  } catch (err) {
-    if (err.upgrade) {
-      $('create-error').innerHTML = `Pro tier required. <a href="#" id="create-upgrade-link">Upgrade for $2.99</a>`;
-      document.getElementById('create-upgrade-link')?.addEventListener('click', e => { e.preventDefault(); closeCreateModal(); startCheckout(); });
-    } else {
-      $('create-error').textContent = err.message;
+    const data = await api('POST', '/api/brackets', { title, size });
+    // If server returns checkoutUrl, bracket is pending_payment — show payment modal
+    if (data.checkoutUrl) {
+      state.pendingBracket = data;
+      const priceMap = { 16: '$1.99', 32: '$3.99', 64: '$4.99' };
+      $('payment-size').textContent = data.size;
+      $('payment-per-price').textContent = priceMap[data.size] || '$4.99';
+      closeCreateModal();
+      show('payment-modal');
+      return;
     }
+    closeCreateModal();
+    await showManageView(data.slug);
+  } catch (err) {
+    $('create-error').textContent = err.message;
     show('create-error');
   }
+});
+
+$('pay-per-bracket-btn').addEventListener('click', () => {
+  if (state.pendingBracket?.checkoutUrl) {
+    window.location.href = state.pendingBracket.checkoutUrl;
+  }
+});
+
+$('pay-lifetime-btn').addEventListener('click', async () => {
+  try {
+    const data = await api('POST', '/api/checkout/lifetime');
+    if (data.url) window.location.href = data.url;
+  } catch (e) {
+    alert('Checkout failed: ' + e.message);
+  }
+});
+
+$('payment-cancel-btn').addEventListener('click', () => {
+  hide('payment-modal');
+  state.pendingBracket = null;
 });
 
 // ─── Manage View ──────────────────────────────────────────────────────────────
@@ -1124,15 +1157,7 @@ $('vote-modal-close').addEventListener('click', () => hide('vote-modal'));
 });
 
 // ─── Stripe Checkout ──────────────────────────────────────────────────────────
-async function startCheckout() {
-  if (!state.user) { showAuth(); return; }
-  try {
-    const { url } = await api('POST', '/api/checkout');
-    window.location.href = url;
-  } catch (e) {
-    alert('Checkout unavailable: ' + e.message);
-  }
-}
+// startCheckout replaced by inline handlers for per-bracket and lifetime options
 
 // ─── Escape HTML ──────────────────────────────────────────────────────────────
 function esc(str) {

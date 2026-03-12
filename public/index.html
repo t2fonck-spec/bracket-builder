@@ -64,7 +64,7 @@
       </div>
       <div id="upgrade-banner" class="upgrade-banner hidden">
         <div>
-          <strong>Unlock Pro</strong> — get 16 &amp; 32-team brackets for a one-time payment of <strong>$2.99</strong>
+          <strong>Unlock Pro</strong> — unlimited 16, 32 &amp; 64-team brackets for a one-time payment of <strong>$14.99</strong>
         </div>
         <button class="btn btn-gold btn-sm" id="upgrade-btn">Upgrade Now</button>
       </div>
@@ -353,6 +353,29 @@
       <div class="champion-label">Champion</div>
       <img id="champion-img" class="champion-img hidden" alt="" loading="lazy">
       <div id="champion-name" class="champion-name"></div>
+    </div>
+  </div>
+
+  <!-- Payment Modal -->
+  <div id="payment-modal" class="modal-overlay hidden" role="dialog" aria-modal="true">
+    <div class="modal-box payment-modal-box">
+      <h3>Unlock <span id="payment-size">16</span>-Team Brackets</h3>
+      <div class="payment-options">
+        <div class="payment-option">
+          <div class="payment-option-title">This Bracket</div>
+          <div class="payment-option-price" id="payment-per-price">$1.99</div>
+          <div class="payment-option-desc">One-time, just this bracket</div>
+          <button class="btn btn-primary" id="pay-per-bracket-btn">Pay Now</button>
+        </div>
+        <div class="payment-option payment-option-recommended">
+          <div class="payment-badge">Best Value</div>
+          <div class="payment-option-title">Lifetime Pro</div>
+          <div class="payment-option-price">$14.99</div>
+          <div class="payment-option-desc">Unlimited 16, 32, & 64-team brackets forever</div>
+          <button class="btn btn-gold" id="pay-lifetime-btn">Get Lifetime Pro</button>
+        </div>
+      </div>
+      <button class="btn btn-ghost btn-sm" id="payment-cancel-btn">Cancel</button>
     </div>
   </div>
 
