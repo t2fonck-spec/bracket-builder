@@ -71,7 +71,7 @@ function clearAuth() {
 }
 
 // ─── View Management ──────────────────────────────────────────────────────────
-const VIEWS = ['auth-view', 'dashboard-view', 'manage-view', 'bracket-view'];
+const VIEWS = ['auth-view', 'dashboard-view', 'manage-view', 'bracket-view', 'reset-password-view'];
 function showView(name) {
   if (state.pollTimer) { clearInterval(state.pollTimer); state.pollTimer = null; }
   VIEWS.forEach(v => hide(v));
@@ -83,6 +83,12 @@ function showView(name) {
 async function route(path) {
   path = path || window.location.pathname;
   const slug = path.replace(/^\//, '').replace(/\/$/, '');
+
+  // Reset password route
+  if (slug === 'reset-password') {
+    showView('reset-password');
+    return;
+  }
 
   if (!slug || slug === '') {
     if (state.user) {
@@ -165,6 +171,42 @@ $('auth-form').addEventListener('submit', async e => {
   } finally {
     btn.disabled = false;
     btn.textContent = authMode === 'login' ? 'Sign In' : 'Create Account';
+  }
+});
+
+// Forgot password
+$('forgot-password-link').addEventListener('click', e => {
+  e.preventDefault();
+  show('forgot-password-form');
+});
+
+$('forgot-submit').addEventListener('click', async () => {
+  hide('forgot-error'); hide('forgot-msg');
+  const email = $('forgot-email').value.trim();
+  if (!email) return;
+  try {
+    await api('POST', '/api/forgot-password', { email });
+    show('forgot-msg');
+  } catch (e) {
+    $('forgot-error').textContent = e.message;
+    show('forgot-error');
+  }
+});
+
+// Reset password (from email link — token is in URL query param: /reset-password?token=xxx)
+$('reset-submit').addEventListener('click', async () => {
+  hide('reset-error'); hide('reset-msg');
+  const password = $('reset-new-password').value;
+  const params = new URLSearchParams(window.location.search);
+  const token = params.get('token');
+  if (!token) { $('reset-error').textContent = 'Invalid reset link'; show('reset-error'); return; }
+  try {
+    await api('POST', '/api/reset-password', { token, password });
+    $('reset-msg').textContent = 'Password reset! You can now sign in.';
+    show('reset-msg');
+  } catch (e) {
+    $('reset-error').textContent = e.message;
+    show('reset-error');
   }
 });
 
