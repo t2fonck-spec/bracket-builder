@@ -317,6 +317,86 @@ app.post('/api/brackets', auth, (req, res) => {
   }
 });
 
+// ─── NCAA Template ────────────────────────────────────────────────────────────
+app.get('/api/ncaa-template', (req, res) => {
+  try {
+    const raw = fs.readFileSync(path.join(__dirname, 'data', 'ncaa-2026.json'), 'utf8');
+    const teams = JSON.parse(raw);
+    if (!Array.isArray(teams) || teams.length !== 64) {
+      return res.json({ available: false });
+    }
+    res.json({ available: true, teams });
+  } catch {
+    res.json({ available: false });
+  }
+});
+
+const REGION_OFFSET = { East: 0, West: 16, South: 32, Midwest: 48 };
+
+app.post('/api/brackets/ncaa', auth, async (req, res) => {
+  // Load template
+  let teams;
+  try {
+    teams = JSON.parse(fs.readFileSync(path.join(__dirname, 'data', 'ncaa-2026.json'), 'utf8'));
+    if (!Array.isArray(teams) || teams.length !== 64) throw new Error('not ready');
+  } catch {
+    return res.status(400).json({ error: 'NCAA 2026 template is not available yet' });
+  }
+
+  const bracketSize = 64;
+
+  // Payment gate for non-pro users
+  if (req.user.tier !== 'pro') {
+    const slug = 'ncaa-2026-' + crypto.randomBytes(3).toString('hex');
+    const row = db.prepare('INSERT INTO brackets (user_id, title, slug, size, status) VALUES (?, ?, ?, ?, ?)')
+      .run(req.user.id, 'NCAA Tournament 2026', slug, bracketSize, 'pending_payment');
+    const bracketId = row.lastInsertRowid;
+
+    // Seed all 64 participants now (so they're ready after payment)
+    const insertP = db.prepare('INSERT INTO participants (bracket_id, name, img, seed) VALUES (?, ?, NULL, ?)');
+    db.transaction(() => {
+      for (const t of teams) {
+        const globalSeed = REGION_OFFSET[t.region] + t.seed;
+        insertP.run(bracketId, t.name, globalSeed);
+      }
+    })();
+
+    // Create Stripe checkout
+    if (!STRIPE_SECRET) return res.status(503).json({ error: 'Payments not configured' });
+    const stripe = require('stripe')(STRIPE_SECRET);
+    try {
+      const session = await stripe.checkout.sessions.create({
+        payment_method_types: ['card'],
+        line_items: [{ price: process.env.STRIPE_PRICE_64, quantity: 1 }],
+        mode: 'payment',
+        success_url: `${BASE_URL}/#manage/${slug}?payment=success`,
+        cancel_url: `${BASE_URL}/?payment=cancelled`,
+        metadata: { bracket_id: String(bracketId), user_id: String(req.user.id), purchase_type: 'per_bracket' },
+      });
+      return res.json({ slug, checkoutUrl: session.url, requiresPayment: true });
+    } catch (e) {
+      console.error('Stripe error:', e.message);
+      return res.status(500).json({ error: 'Stripe checkout failed' });
+    }
+  }
+
+  // Pro user: create directly
+  const slug = 'ncaa-2026-' + crypto.randomBytes(3).toString('hex');
+  const row = db.prepare('INSERT INTO brackets (user_id, title, slug, size, is_paid, status) VALUES (?, ?, ?, ?, 1, ?)')
+    .run(req.user.id, 'NCAA Tournament 2026', slug, bracketSize, 'setup');
+  const bracketId = row.lastInsertRowid;
+
+  const insertP = db.prepare('INSERT INTO participants (bracket_id, name, img, seed) VALUES (?, ?, NULL, ?)');
+  db.transaction(() => {
+    for (const t of teams) {
+      const globalSeed = REGION_OFFSET[t.region] + t.seed;
+      insertP.run(bracketId, t.name, globalSeed);
+    }
+  })();
+
+  res.status(201).json({ slug, requiresPayment: false });
+});
+
 app.get('/api/brackets/:slug', optionalAuth, (req, res) => {
   const bracket = db.prepare('SELECT * FROM brackets WHERE slug = ?').get(req.params.slug);
   if (!bracket) return res.status(404).json({ error: 'Bracket not found' });
