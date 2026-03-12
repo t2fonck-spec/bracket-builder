@@ -121,18 +121,23 @@ function navigate(path) {
 window.addEventListener('popstate', () => route());
 
 // ─── Check for upgrade/cancel params ─────────────────────────────────────────
-function checkUrlParams() {
+async function checkUrlParams() {
   const params = new URLSearchParams(window.location.search);
   if (params.get('upgraded') === '1') {
     // Re-fetch user to get updated tier
-    api('GET', '/api/me').then(user => {
+    try {
+      const user = await api('GET', '/api/me');
       saveAuth(state.token, user);
       renderHeaderTier();
-    }).catch(() => {});
+    } catch (_) {}
     window.history.replaceState({}, '', '/');
   }
   if (params.get('payment') === 'success') {
-    // Per-bracket payment completed — clean URL, bracket will load via slug route
+    const sessionId = params.get('session_id');
+    if (sessionId) {
+      // Verify payment server-side to unlock bracket immediately (avoid webhook race)
+      try { await api('POST', '/api/verify-payment', { session_id: sessionId }); } catch (_) {}
+    }
     const clean = window.location.pathname;
     window.history.replaceState({}, '', clean);
   }
@@ -329,7 +334,7 @@ $('ncaa-template-btn').addEventListener('click', async () => {
       // Show payment modal with per-bracket vs lifetime choice
       state.pendingBracket = { ...data, size: 64 };
       $('payment-size').textContent = '64';
-      $('payment-per-price').textContent = '$4.99';
+      $('payment-per-price').textContent = '$2.99';
       show('payment-modal');
     } else {
       navigate('/' + data.slug);
@@ -384,9 +389,9 @@ $('create-form').addEventListener('submit', async e => {
     // If server returns checkoutUrl, bracket is pending_payment — show payment modal
     if (data.checkoutUrl) {
       state.pendingBracket = data;
-      const priceMap = { 16: '$1.99', 32: '$3.99', 64: '$4.99' };
+      const priceMap = { 16: '$0.99', 32: '$1.99', 64: '$2.99' };
       $('payment-size').textContent = data.size;
-      $('payment-per-price').textContent = priceMap[data.size] || '$4.99';
+      $('payment-per-price').textContent = priceMap[data.size] || '$2.99';
       closeCreateModal();
       show('payment-modal');
       return;
@@ -1630,5 +1635,4 @@ $('pricing-lifetime-btn')?.addEventListener('click', async () => {
 
 // ─── Boot ─────────────────────────────────────────────────────────────────────
 loadAuth();
-checkUrlParams();
-route(window.location.pathname);
+checkUrlParams().then(() => route(window.location.pathname));

@@ -339,7 +339,7 @@ app.post('/api/brackets', auth, async (req, res) => {
       payment_method_types: ['card'],
       line_items: [{ price: priceMap[bracketSize], quantity: 1 }],
       mode: 'payment',
-      success_url: `${BASE_URL}/${slug}?payment=success`,
+      success_url: `${BASE_URL}/${slug}?payment=success&session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${BASE_URL}/?payment=cancelled`,
       metadata: { bracket_id: String(bracketId), user_id: String(req.user.id), purchase_type: 'per_bracket' },
     });
@@ -791,6 +791,34 @@ app.post('/api/checkout/lifetime', auth, async (req, res) => {
   } catch (e) {
     console.error('Stripe error:', e.message);
     res.status(500).json({ error: 'Checkout failed' });
+  }
+});
+
+// ─── Verify Payment (called on success redirect to avoid webhook race) ───────
+app.post('/api/verify-payment', auth, async (req, res) => {
+  if (!stripe) return res.status(503).json({ error: 'Payments not configured' });
+  const { session_id } = req.body;
+  if (!session_id) return res.status(400).json({ error: 'Missing session_id' });
+  try {
+    const session = await stripe.checkout.sessions.retrieve(session_id);
+    if (session.payment_status !== 'paid') return res.json({ status: 'pending' });
+    const purchaseType = session.metadata?.purchase_type;
+    if (purchaseType === 'per_bracket') {
+      const bracketId = parseInt(session.metadata?.bracket_id, 10);
+      if (bracketId) {
+        db.prepare('UPDATE brackets SET is_paid = 1, status = ? WHERE id = ? AND status = ?')
+          .run('setup', bracketId, 'pending_payment');
+      }
+      return res.json({ status: 'paid', bracket_id: bracketId });
+    } else if (purchaseType === 'lifetime') {
+      const userId = parseInt(session.metadata?.user_id, 10);
+      if (userId) db.prepare('UPDATE users SET tier = ? WHERE id = ?').run('pro', userId);
+      return res.json({ status: 'paid', tier: 'pro' });
+    }
+    res.json({ status: 'paid' });
+  } catch (e) {
+    console.error('verify-payment error:', e.message);
+    res.status(500).json({ error: 'Verification failed' });
   }
 });
 
