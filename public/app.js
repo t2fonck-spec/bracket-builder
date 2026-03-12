@@ -230,6 +230,12 @@ async function showDashboard() {
     $('brackets-list').innerHTML = '';
     show('brackets-empty');
   }
+
+  // Check if NCAA template is available
+  try {
+    const ncaa = await api('GET', '/api/ncaa-template');
+    setHidden('ncaa-template-btn', !ncaa.available);
+  } catch { setHidden('ncaa-template-btn', true); }
 }
 
 function renderHeaderTier() {
@@ -303,6 +309,24 @@ $('upgrade-btn')?.addEventListener('click', async () => {
     if (data.url) window.location.href = data.url;
   } catch (e) {
     alert('Checkout failed: ' + e.message);
+  }
+});
+
+// ─── NCAA Template Button ─────────────────────────────────────────────────────
+$('ncaa-template-btn').addEventListener('click', async () => {
+  try {
+    const data = await api('POST', '/api/brackets/ncaa');
+    if (data.requiresPayment && data.checkoutUrl) {
+      // Show payment modal with per-bracket vs lifetime choice
+      state.pendingBracket = { ...data, size: 64 };
+      $('payment-size').textContent = '64';
+      $('payment-per-price').textContent = '$4.99';
+      show('payment-modal');
+    } else {
+      navigate('/' + data.slug);
+    }
+  } catch (e) {
+    alert('Failed: ' + e.message);
   }
 });
 
