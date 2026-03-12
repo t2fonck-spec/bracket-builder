@@ -7,6 +7,16 @@ const path = require('path');
 const crypto = require('crypto');
 const nodemailer = require('nodemailer');
 const multer = require('multer');
+const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
+
+const r2 = process.env.R2_ACCOUNT_ID ? new S3Client({
+  region: 'auto',
+  endpoint: `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
+  credentials: {
+    accessKeyId: process.env.R2_ACCESS_KEY_ID,
+    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
+  },
+}) : null;
 
 const app = express();
 const DB_PATH = process.env.DB_PATH || './data/brackets.db';
@@ -93,14 +103,8 @@ app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
 // ─── Upload Setup ─────────────────────────────────────────────────────────────
-const UPLOADS_DIR = path.join(__dirname, 'public', 'uploads');
-fs.mkdirSync(UPLOADS_DIR, { recursive: true });
-
 const upload = multer({
-  storage: multer.diskStorage({
-    destination: (req, file, cb) => cb(null, UPLOADS_DIR),
-    filename: (req, file, cb) => cb(null, crypto.randomBytes(16).toString('hex') + path.extname(file.originalname).toLowerCase()),
-  }),
+  storage: multer.memoryStorage(),
   limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     if (['image/jpeg', 'image/png', 'image/gif', 'image/webp'].includes(file.mimetype)) {
@@ -179,14 +183,37 @@ app.get('/verify/:token', (req, res) => {
 
 // ─── Image Upload ─────────────────────────────────────────────────────────────
 app.post('/api/upload', auth, (req, res) => {
-  upload.single('image')(req, res, (err) => {
+  upload.single('image')(req, res, async (err) => {
     if (err) {
       if (err.code === 'LIMIT_FILE_SIZE') return res.status(400).json({ error: 'Image must be under 5MB' });
       if (err.code === 'INVALID_TYPE') return res.status(400).json({ error: 'Only image files allowed' });
       return res.status(400).json({ error: err.message });
     }
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
-    res.json({ url: '/uploads/' + req.file.filename });
+
+    const ext = path.extname(req.file.originalname).toLowerCase() || '.jpg';
+    const key = crypto.randomBytes(16).toString('hex') + ext;
+
+    if (r2) {
+      try {
+        await r2.send(new PutObjectCommand({
+          Bucket: process.env.R2_BUCKET_NAME,
+          Key: key,
+          Body: req.file.buffer,
+          ContentType: req.file.mimetype,
+        }));
+        res.json({ url: `${process.env.R2_PUBLIC_URL}/${key}` });
+      } catch (e) {
+        console.error('R2 upload error:', e);
+        res.status(500).json({ error: 'Image upload failed' });
+      }
+    } else {
+      // Fallback to disk for local dev (no R2 configured)
+      const UPLOADS_DIR = path.join(__dirname, 'public', 'uploads');
+      fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+      fs.writeFileSync(path.join(UPLOADS_DIR, key), req.file.buffer);
+      res.json({ url: '/uploads/' + key });
+    }
   });
 });
 
