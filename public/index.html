@@ -36,8 +36,29 @@
         </div>
         <div id="auth-error" class="form-error hidden"></div>
         <button type="submit" class="btn btn-primary btn-full" id="auth-submit">Sign In</button>
+        <p class="forgot-link"><a href="#" id="forgot-password-link">Forgot password?</a></p>
       </form>
+      <div id="forgot-password-form" class="hidden" style="margin-top: 16px;">
+        <p class="form-label" style="margin-bottom: 8px;">Enter your email and we'll send a reset link.</p>
+        <div class="field-row">
+          <input type="email" id="forgot-email" placeholder="you@example.com" required>
+          <button class="btn btn-primary btn-sm" id="forgot-submit">Send Link</button>
+        </div>
+        <div id="forgot-msg" class="hidden" style="margin-top: 8px; color: var(--success);">Check your email for a reset link.</div>
+        <div id="forgot-error" class="form-error hidden"></div>
+      </div>
     </div>
+  </div>
+
+  <!-- ── Reset Password View ───────────────────────────────── -->
+  <div id="reset-password-view" class="hidden auth-container">
+    <h2>Reset Password</h2>
+    <div class="field-row" style="flex-direction: column; gap: 12px;">
+      <input type="password" id="reset-new-password" placeholder="New password (12+ characters)" minlength="12">
+      <button class="btn btn-primary" id="reset-submit">Reset Password</button>
+    </div>
+    <div id="reset-msg" class="hidden" style="margin-top: 8px; color: var(--success);"></div>
+    <div id="reset-error" class="form-error hidden"></div>
   </div>
 
   <!-- ── Dashboard View ───────────────────────────────────── -->
