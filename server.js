@@ -29,6 +29,7 @@ db.pragma('foreign_keys = ON');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-please-change-in-production';
 const STRIPE_SECRET = process.env.STRIPE_SECRET_KEY;
+const stripe = STRIPE_SECRET ? require('stripe')(STRIPE_SECRET) : null;
 const BASE_URL = process.env.BASE_URL || 'http://localhost:3000';
 
 const transporter = process.env.RESEND_SMTP_PASS ? require('nodemailer').createTransport({
@@ -147,7 +148,10 @@ function auth(req, res, next) {
   const header = req.headers.authorization;
   if (!header?.startsWith('Bearer ')) return res.status(401).json({ error: 'Unauthorized' });
   try {
-    req.user = jwt.verify(header.slice(7), JWT_SECRET);
+    const payload = jwt.verify(header.slice(7), JWT_SECRET);
+    const user = db.prepare('SELECT id, email, tier FROM users WHERE id = ?').get(payload.id);
+    if (!user) return res.status(401).json({ error: 'User not found' });
+    req.user = user;
     next();
   } catch {
     res.status(401).json({ error: 'Invalid or expired token' });
@@ -157,7 +161,10 @@ function auth(req, res, next) {
 function optionalAuth(req, res, next) {
   const header = req.headers.authorization;
   if (header?.startsWith('Bearer ')) {
-    try { req.user = jwt.verify(header.slice(7), JWT_SECRET); } catch {}
+    try {
+      const payload = jwt.verify(header.slice(7), JWT_SECRET);
+      req.user = db.prepare('SELECT id, email, tier FROM users WHERE id = ?').get(payload.id);
+    } catch {}
   }
   next();
 }
@@ -296,21 +303,45 @@ app.get('/api/brackets', auth, (req, res) => {
   res.json(rows);
 });
 
-app.post('/api/brackets', auth, (req, res) => {
+app.post('/api/brackets', auth, async (req, res) => {
   const { title, size } = req.body || {};
   if (!title?.trim()) return res.status(400).json({ error: 'Title required' });
   const bracketSize = [8, 16, 32, 64].includes(Number(size)) ? Number(size) : 8;
 
-  if (bracketSize > 8 && req.user.tier === 'free') {
-    return res.status(403).json({ error: 'Pro tier required for 16 and 32-team brackets', upgrade: true });
-  }
-
   const slug = title.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '')
     + '-' + crypto.randomBytes(3).toString('hex');
 
+  // Free tier: 8-team brackets always allowed
+  if (bracketSize <= 8 || req.user.tier === 'pro') {
+    try {
+      const row = db.prepare('INSERT INTO brackets (user_id, title, slug, size, is_paid, status) VALUES (?, ?, ?, ?, ?, ?)')
+        .run(req.user.id, title.trim(), slug, bracketSize, req.user.tier === 'pro' ? 1 : 0, 'setup');
+      return res.status(201).json({ id: row.lastInsertRowid, title: title.trim(), slug, size: bracketSize, status: 'setup' });
+    } catch (e) {
+      console.error(e);
+      return res.status(500).json({ error: 'Failed to create bracket' });
+    }
+  }
+
+  // Non-pro user wants 16/32/64 — create pending_payment and return Stripe checkout
+  if (!stripe) return res.status(503).json({ error: 'Payments not configured' });
+
   try {
-    const row = db.prepare('INSERT INTO brackets (user_id, title, slug, size) VALUES (?, ?, ?, ?)').run(req.user.id, title.trim(), slug, bracketSize);
-    res.status(201).json({ id: row.lastInsertRowid, title: title.trim(), slug, size: bracketSize, status: 'setup', participant_count: 0 });
+    const row = db.prepare('INSERT INTO brackets (user_id, title, slug, size, status) VALUES (?, ?, ?, ?, ?)')
+      .run(req.user.id, title.trim(), slug, bracketSize, 'pending_payment');
+    const bracketId = row.lastInsertRowid;
+
+    const priceMap = { 16: process.env.STRIPE_PRICE_16, 32: process.env.STRIPE_PRICE_32, 64: process.env.STRIPE_PRICE_64 };
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ['card'],
+      line_items: [{ price: priceMap[bracketSize], quantity: 1 }],
+      mode: 'payment',
+      success_url: `${BASE_URL}/#manage/${slug}?payment=success`,
+      cancel_url: `${BASE_URL}/?payment=cancelled`,
+      metadata: { bracket_id: String(bracketId), user_id: String(req.user.id), purchase_type: 'per_bracket' },
+    });
+
+    res.status(201).json({ id: bracketId, title: title.trim(), slug, size: bracketSize, status: 'pending_payment', checkoutUrl: session.url });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Failed to create bracket' });
@@ -362,8 +393,7 @@ app.post('/api/brackets/ncaa', auth, async (req, res) => {
     })();
 
     // Create Stripe checkout
-    if (!STRIPE_SECRET) return res.status(503).json({ error: 'Payments not configured' });
-    const stripe = require('stripe')(STRIPE_SECRET);
+    if (!stripe) return res.status(503).json({ error: 'Payments not configured' });
     try {
       const session = await stripe.checkout.sessions.create({
         payment_method_types: ['card'],
@@ -741,40 +771,29 @@ app.post('/api/brackets/:slug/rollback', auth, (req, res) => {
 });
 
 // ─── Stripe Checkout ──────────────────────────────────────────────────────────
-app.post('/api/checkout', auth, async (req, res) => {
-  if (!STRIPE_SECRET) return res.status(503).json({ error: 'Stripe is not configured on this server' });
+app.post('/api/checkout/lifetime', auth, async (req, res) => {
+  if (!stripe) return res.status(503).json({ error: 'Payments not configured' });
+  if (req.user.tier === 'pro') return res.status(400).json({ error: 'Already a Pro user' });
 
-  const stripe = require('stripe')(STRIPE_SECRET);
   try {
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'],
-      line_items: [{
-        price_data: {
-          currency: 'usd',
-          product_data: {
-            name: 'Bracket Builder Pro',
-            description: 'Unlock 16 & 32-team brackets with unlimited voting',
-          },
-          unit_amount: 299, // $2.99
-        },
-        quantity: 1,
-      }],
+      line_items: [{ price: process.env.STRIPE_PRICE_LIFETIME, quantity: 1 }],
       mode: 'payment',
       success_url: `${BASE_URL}/?upgraded=1`,
       cancel_url: `${BASE_URL}/?cancelled=1`,
-      metadata: { user_id: String(req.user.id) },
+      metadata: { user_id: String(req.user.id), purchase_type: 'lifetime' },
     });
     res.json({ url: session.url });
   } catch (e) {
     console.error('Stripe error:', e.message);
-    res.status(500).json({ error: 'Stripe checkout failed' });
+    res.status(500).json({ error: 'Checkout failed' });
   }
 });
 
 // ─── Stripe Webhook ───────────────────────────────────────────────────────────
 app.post('/api/webhook', (req, res) => {
-  if (!STRIPE_SECRET || !process.env.STRIPE_WEBHOOK_SECRET) return res.status(400).send('Not configured');
-  const stripe = require('stripe')(STRIPE_SECRET);
+  if (!stripe || !process.env.STRIPE_WEBHOOK_SECRET) return res.status(400).send('Not configured');
   const sig = req.headers['stripe-signature'];
   let event;
   try {
@@ -784,8 +803,17 @@ app.post('/api/webhook', (req, res) => {
   }
   if (event.type === 'checkout.session.completed') {
     const session = event.data.object;
-    const userId = parseInt(session.metadata?.user_id, 10);
-    if (userId) db.prepare('UPDATE users SET tier = ? WHERE id = ?').run('pro', userId);
+    const purchaseType = session.metadata?.purchase_type;
+    if (purchaseType === 'lifetime') {
+      const userId = parseInt(session.metadata?.user_id, 10);
+      if (userId) db.prepare('UPDATE users SET tier = ? WHERE id = ?').run('pro', userId);
+    } else if (purchaseType === 'per_bracket') {
+      const bracketId = parseInt(session.metadata?.bracket_id, 10);
+      if (bracketId) {
+        db.prepare('UPDATE brackets SET is_paid = 1, status = ? WHERE id = ? AND status = ?')
+          .run('setup', bracketId, 'pending_payment');
+      }
+    }
   }
   res.json({ received: true });
 });
