@@ -5,6 +5,8 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const path = require('path');
 const crypto = require('crypto');
+const nodemailer = require('nodemailer');
+const multer = require('multer');
 
 const app = express();
 const DB_PATH = process.env.DB_PATH || './data/brackets.db';
@@ -26,7 +28,9 @@ db.exec(`
     email         TEXT    UNIQUE NOT NULL,
     password_hash TEXT    NOT NULL,
     tier          TEXT    NOT NULL DEFAULT 'free',
-    created_at    DATETIME DEFAULT CURRENT_TIMESTAMP
+    created_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
+    email_verified INTEGER NOT NULL DEFAULT 1,
+    verification_token TEXT
   );
 
   CREATE TABLE IF NOT EXISTS brackets (
@@ -88,6 +92,25 @@ app.use('/api/webhook', express.raw({ type: 'application/json' }));
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
+// ─── Upload Setup ─────────────────────────────────────────────────────────────
+const UPLOADS_DIR = path.join(__dirname, 'public', 'uploads');
+fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+
+const upload = multer({
+  storage: multer.diskStorage({
+    destination: (req, file, cb) => cb(null, UPLOADS_DIR),
+    filename: (req, file, cb) => cb(null, crypto.randomBytes(16).toString('hex') + path.extname(file.originalname).toLowerCase()),
+  }),
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (['image/jpeg', 'image/png', 'image/gif', 'image/webp'].includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(Object.assign(new Error('Only image files allowed'), { code: 'INVALID_TYPE' }));
+    }
+  },
+});
+
 function auth(req, res, next) {
   const header = req.headers.authorization;
   if (!header?.startsWith('Bearer ')) return res.status(401).json({ error: 'Unauthorized' });
@@ -111,11 +134,13 @@ function optionalAuth(req, res, next) {
 app.post('/api/register', async (req, res) => {
   const { email, password } = req.body || {};
   if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
-  if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
+  if (password.length < 12) return res.status(400).json({ error: 'Password must be at least 12 characters' });
   try {
     const hash = await bcrypt.hash(password, 10);
-    const row = db.prepare('INSERT INTO users (email, password_hash) VALUES (?, ?)').run(email.toLowerCase().trim(), hash);
-    const user = { id: row.lastInsertRowid, email: email.toLowerCase().trim(), tier: 'free' };
+    const normalEmail = email.toLowerCase().trim();
+    const row = db.prepare('INSERT INTO users (email, password_hash, email_verified) VALUES (?, ?, 1)').run(normalEmail, hash);
+    
+    const user = { id: row.lastInsertRowid, email: normalEmail, tier: 'free' };
     const token = jwt.sign(user, JWT_SECRET, { expiresIn: '30d' });
     res.status(201).json({ token, user });
   } catch (e) {
@@ -132,6 +157,7 @@ app.post('/api/login', async (req, res) => {
   if (!row) return res.status(401).json({ error: 'Invalid credentials' });
   const valid = await bcrypt.compare(password, row.password_hash);
   if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
+  
   const user = { id: row.id, email: row.email, tier: row.tier };
   const token = jwt.sign(user, JWT_SECRET, { expiresIn: '30d' });
   res.json({ token, user });
@@ -140,6 +166,28 @@ app.post('/api/login', async (req, res) => {
 app.get('/api/me', auth, (req, res) => {
   const row = db.prepare('SELECT id, email, tier FROM users WHERE id = ?').get(req.user.id);
   res.json(row);
+});
+
+app.get('/verify/:token', (req, res) => {
+  const user = db.prepare('SELECT * FROM users WHERE verification_token = ?').get(req.params.token);
+  if (!user) return res.redirect('/?verify_error=1');
+  db.prepare('UPDATE users SET email_verified = 1, verification_token = NULL WHERE id = ?').run(user.id);
+  const jwtUser = { id: user.id, email: user.email, tier: user.tier };
+  const token = jwt.sign(jwtUser, JWT_SECRET, { expiresIn: '30d' });
+  res.redirect(`/?verified=1&token=${token}`);
+});
+
+// ─── Image Upload ─────────────────────────────────────────────────────────────
+app.post('/api/upload', auth, (req, res) => {
+  upload.single('image')(req, res, (err) => {
+    if (err) {
+      if (err.code === 'LIMIT_FILE_SIZE') return res.status(400).json({ error: 'Image must be under 5MB' });
+      if (err.code === 'INVALID_TYPE') return res.status(400).json({ error: 'Only image files allowed' });
+      return res.status(400).json({ error: err.message });
+    }
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+    res.json({ url: '/uploads/' + req.file.filename });
+  });
 });
 
 // ─── Bracket Routes ───────────────────────────────────────────────────────────
