@@ -102,6 +102,25 @@ app.use('/api/webhook', express.raw({ type: 'application/json' }));
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
+// ─── Rate Limiters ────────────────────────────────────────────────────────────
+const rateLimit = require('express-rate-limit');
+
+const voteLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests, please try again later' },
+});
+
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests, please try again later' },
+});
+
 // ─── Upload Setup ─────────────────────────────────────────────────────────────
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -135,7 +154,7 @@ function optionalAuth(req, res, next) {
 }
 
 // ─── Auth Routes ─────────────────────────────────────────────────────────────
-app.post('/api/register', async (req, res) => {
+app.post('/api/register', authLimiter, async (req, res) => {
   const { email, password } = req.body || {};
   if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
   if (password.length < 12) return res.status(400).json({ error: 'Password must be at least 12 characters' });
@@ -154,7 +173,7 @@ app.post('/api/register', async (req, res) => {
   }
 });
 
-app.post('/api/login', async (req, res) => {
+app.post('/api/login', authLimiter, async (req, res) => {
   const { email, password } = req.body || {};
   if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
   const row = db.prepare('SELECT * FROM users WHERE email = ?').get(email.toLowerCase().trim());
@@ -361,7 +380,7 @@ app.post('/api/brackets/:slug/start', auth, (req, res) => {
 });
 
 // ─── Vote ─────────────────────────────────────────────────────────────────────
-app.post('/api/brackets/:slug/vote', (req, res) => {
+app.post('/api/brackets/:slug/vote', voteLimiter, (req, res) => {
   const bracket = db.prepare('SELECT * FROM brackets WHERE slug = ?').get(req.params.slug);
   if (!bracket) return res.status(404).json({ error: 'Not found' });
   if (bracket.status !== 'active') return res.status(400).json({ error: 'Bracket is not accepting votes' });
