@@ -31,6 +31,13 @@ const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-please-change-in-produc
 const STRIPE_SECRET = process.env.STRIPE_SECRET_KEY;
 const BASE_URL = process.env.BASE_URL || 'http://localhost:3000';
 
+const transporter = process.env.RESEND_SMTP_PASS ? require('nodemailer').createTransport({
+  host: 'smtp.resend.com',
+  port: 465,
+  secure: true,
+  auth: { user: process.env.RESEND_SMTP_USER || 'resend', pass: process.env.RESEND_SMTP_PASS },
+}) : null;
+
 // ─── Schema ──────────────────────────────────────────────────────────────────
 db.exec(`
   CREATE TABLE IF NOT EXISTS users (
@@ -95,6 +102,8 @@ db.exec(`
 ['ALTER TABLE matchups ADD COLUMN score_a INTEGER',
  'ALTER TABLE matchups ADD COLUMN score_b INTEGER',
  'ALTER TABLE brackets ADD COLUMN description TEXT',
+ 'ALTER TABLE users ADD COLUMN reset_token TEXT',
+ 'ALTER TABLE users ADD COLUMN reset_token_expires INTEGER',
 ].forEach(sql => { try { db.exec(sql); } catch {} });
 
 // ─── Middleware ───────────────────────────────────────────────────────────────
@@ -189,6 +198,44 @@ app.post('/api/login', authLimiter, async (req, res) => {
 app.get('/api/me', auth, (req, res) => {
   const row = db.prepare('SELECT id, email, tier FROM users WHERE id = ?').get(req.user.id);
   res.json(row);
+});
+
+app.post('/api/forgot-password', authLimiter, async (req, res) => {
+  const { email } = req.body || {};
+  if (!email) return res.status(400).json({ error: 'Email required' });
+  // Always return ok to avoid leaking whether email exists
+  res.json({ ok: true });
+  // Send reset email in background
+  const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email.toLowerCase().trim());
+  if (!user || !transporter) return;
+  const token = crypto.randomBytes(32).toString('hex');
+  db.prepare('UPDATE users SET reset_token = ?, reset_token_expires = ? WHERE id = ?')
+    .run(token, Date.now() + 3600000, user.id);
+  try {
+    await transporter.sendMail({
+      from: `Bracket Builder <noreply@${new URL(BASE_URL).hostname}>`,
+      to: user.email,
+      subject: 'Reset your password',
+      html: `<p>Click the link below to reset your password. This link expires in 1 hour.</p>
+             <p><a href="${BASE_URL}/reset-password?token=${token}">Reset Password</a></p>
+             <p>If you didn't request this, ignore this email.</p>`,
+    });
+  } catch (e) {
+    console.error('Email send error:', e);
+  }
+});
+
+app.post('/api/reset-password', async (req, res) => {
+  const { token, password } = req.body || {};
+  if (!token || !password) return res.status(400).json({ error: 'Token and password required' });
+  if (password.length < 12) return res.status(400).json({ error: 'Password must be at least 12 characters' });
+  const user = db.prepare('SELECT * FROM users WHERE reset_token = ? AND reset_token_expires > ?')
+    .get(token, Date.now());
+  if (!user) return res.status(400).json({ error: 'Invalid or expired reset link' });
+  const hash = await bcrypt.hash(password, 10);
+  db.prepare('UPDATE users SET password_hash = ?, reset_token = NULL, reset_token_expires = NULL WHERE id = ?')
+    .run(hash, user.id);
+  res.json({ ok: true });
 });
 
 app.get('/verify/:token', (req, res) => {
