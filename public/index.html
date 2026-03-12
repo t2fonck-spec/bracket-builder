@@ -11,6 +11,114 @@
 </head>
 <body>
 
+  <!-- ── Landing Page ─────────────────────────────────────── -->
+  <section id="landing-view" class="landing hidden">
+    <!-- Hero -->
+    <div class="landing-hero">
+      <h1>Brackets for everything.<br>Built in minutes.</h1>
+      <p class="landing-sub">Create single-elimination brackets for any tournament — sports, games, anything. Share a link. Let the crowd vote.</p>
+      <div class="landing-ctas">
+        <button class="btn btn-gold btn-lg" id="landing-signup-btn">Create Free Bracket</button>
+        <a href="#pricing" class="btn btn-ghost btn-lg">See Pricing</a>
+      </div>
+    </div>
+
+    <!-- Format Showcase -->
+    <div class="landing-section">
+      <h2>Any size. Any tournament.</h2>
+      <div class="landing-formats">
+        <div class="format-card">
+          <div class="format-size">8</div>
+          <div class="format-label">Team</div>
+          <div class="format-price">Free</div>
+        </div>
+        <div class="format-card">
+          <div class="format-size">16</div>
+          <div class="format-label">Team</div>
+          <div class="format-price">$1.99</div>
+        </div>
+        <div class="format-card">
+          <div class="format-size">32</div>
+          <div class="format-label">Team</div>
+          <div class="format-price">$3.99</div>
+        </div>
+        <div class="format-card format-card-highlight">
+          <div class="format-size">64</div>
+          <div class="format-label">Team</div>
+          <div class="format-price">$4.99</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- NCAA Banner -->
+    <div id="ncaa-banner" class="landing-ncaa hidden">
+      <span>2026 NCAA Tournament bracket — fill yours out now</span>
+      <button class="btn btn-gold btn-sm" id="ncaa-banner-btn">Get Started</button>
+    </div>
+
+    <!-- Features -->
+    <div class="landing-section">
+      <h2>Everything you need</h2>
+      <div class="landing-features">
+        <div class="feature-item"><div class="feature-icon">🔗</div><div class="feature-title">Public Sharing</div><div class="feature-desc">Share a link — anyone can view your bracket</div></div>
+        <div class="feature-item"><div class="feature-icon">✓</div><div class="feature-title">Live Crowd Voting</div><div class="feature-desc">Let your audience vote on matchups in real time</div></div>
+        <div class="feature-item"><div class="feature-icon">📷</div><div class="feature-title">Image Uploads</div><div class="feature-desc">Add images to participants for visual brackets</div></div>
+        <div class="feature-item"><div class="feature-icon">⬇</div><div class="feature-title">Export PNG/PDF</div><div class="feature-desc">Download high-res bracket images or print</div></div>
+      </div>
+    </div>
+
+    <!-- Pricing -->
+    <div class="landing-section" id="pricing">
+      <h2>Simple pricing</h2>
+      <div class="landing-pricing">
+        <div class="pricing-col">
+          <div class="pricing-tier">Free</div>
+          <div class="pricing-amount">$0</div>
+          <ul class="pricing-features">
+            <li>Unlimited 8-team brackets</li>
+            <li>Public sharing</li>
+            <li>Crowd voting</li>
+            <li>PNG/PDF export</li>
+          </ul>
+          <button class="btn btn-ghost" id="pricing-free-btn">Get Started</button>
+        </div>
+        <div class="pricing-col">
+          <div class="pricing-tier">Per Bracket</div>
+          <div class="pricing-amount">$1.99 <span class="pricing-per">–$4.99</span></div>
+          <ul class="pricing-features">
+            <li>16, 32, or 64-team brackets</li>
+            <li>Pay once per bracket</li>
+            <li>Everything in Free</li>
+          </ul>
+          <button class="btn btn-ghost" id="pricing-perbracket-btn">Create a Bracket</button>
+        </div>
+        <div class="pricing-col pricing-col-highlight">
+          <div class="pricing-badge">Best Value</div>
+          <div class="pricing-tier">Lifetime Pro</div>
+          <div class="pricing-amount">$14.99</div>
+          <ul class="pricing-features">
+            <li>Unlimited large brackets</li>
+            <li>16, 32, and 64-team</li>
+            <li>One-time payment, forever</li>
+            <li>Everything in Free</li>
+          </ul>
+          <button class="btn btn-gold" id="pricing-lifetime-btn">Get Lifetime Pro</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <footer class="landing-footer">
+      <span>Bracket Builder</span>
+      <span>·</span>
+      <a href="#">Terms</a>
+      <span>·</span>
+      <a href="#">Privacy</a>
+      <span>·</span>
+      <a href="mailto:support@bracketbuilder.app">Contact</a>
+    </footer>
+  </section>
+
   <!-- ── Auth View ────────────────────────────────────────── -->
   <div id="auth-view" class="view hidden">
     <div class="auth-wrap">
